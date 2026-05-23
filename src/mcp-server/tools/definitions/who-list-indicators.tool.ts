@@ -9,10 +9,10 @@ import { getGhoService } from '@/services/gho/gho-service.js';
 export const whoListIndicators = tool('who_list_indicators', {
   title: 'List WHO GHO Indicators',
   description:
-    'Browse the WHO Global Health Observatory catalog of 3,059 indicators with pagination. ' +
+    'Browse the WHO Global Health Observatory indicator catalog with pagination. ' +
     'Use when you want to explore indicators without a keyword, or to page through the full catalog. ' +
     'Use who_search_indicators when you have a keyword to narrow the results.',
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     limit: z
       .number()
@@ -45,9 +45,7 @@ export const whoListIndicators = tool('who_list_indicators', {
           .describe('An indicator entry with its code and name.'),
       )
       .describe('Indicators for the requested page.'),
-    total: z
-      .number()
-      .describe('Total number of indicators in the catalog (3,059 as of publication).'),
+    total: z.number().describe('Total number of indicators in the GHO catalog.'),
     hasMore: z.boolean().describe('True when more indicators exist beyond the current page.'),
   }),
 

@@ -14,7 +14,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
     'WORLDBANKINCOMEGROUP, or AGEGROUP. Use this to discover valid filter values before calling ' +
     'who_query_indicator_data, or to confirm the correct ISO code for a country. ' +
     'Use who_list_dimensions to discover all available dimension type codes.',
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     dimension: z
       .string()
@@ -56,7 +56,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
     {
       reason: 'dimension_not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'The dimension code returned no values from the API (the API returns HTTP 200 with an empty value array for unknown codes).',
+      when: 'The dimension code returned no values — it may not exist in the GHO catalog.',
       recovery:
         'Use who_list_dimensions to discover valid dimension type codes and retry with a correct code.',
     },

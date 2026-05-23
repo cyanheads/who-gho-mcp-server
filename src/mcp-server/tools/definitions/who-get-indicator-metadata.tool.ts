@@ -10,12 +10,12 @@ import { getGhoService } from '@/services/gho/gho-service.js';
 export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   title: 'Get WHO GHO Indicator Metadata',
   description:
-    'Get metadata for one or more WHO GHO indicator codes: the full indicator name and the dimensions ' +
+    'Fetch metadata for one or more WHO GHO indicator codes: the full indicator name and the dimensions ' +
     'it supports (e.g. COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, AGEGROUP). ' +
-    'Call this before querying data with who_query_indicator_data to understand which filter dimensions ' +
+    'Call this before querying data with who_query_indicator_data to confirm which filter dimensions ' +
     'are valid for a given indicator. Accepts up to 10 codes per call. ' +
-    'Codes with no metadata (unknown codes) are reported in the notFound array rather than causing an error.',
-  annotations: { readOnlyHint: true, openWorldHint: false },
+    'Codes with no metadata are reported in the notFound array rather than causing an error.',
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_codes: z
       .array(z.string().min(1))
@@ -57,7 +57,7 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     notFound: z
       .array(z.string())
       .describe(
-        'Indicator codes that returned no metadata. The GHO API returns HTTP 200 with an empty value array for unknown codes.',
+        'Indicator codes that returned no metadata — they may not exist in the GHO catalog.',
       ),
   }),
 

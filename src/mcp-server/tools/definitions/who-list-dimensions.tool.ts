@@ -13,7 +13,7 @@ export const whoListDimensions = tool('who_list_dimensions', {
     'Use this to discover valid dimension codes before calling who_list_dimension_values. ' +
     'Common dimensions include COUNTRY, REGION, SEX, WORLDBANKINCOMEGROUP, and AGEGROUP, ' +
     'but many additional types exist — this endpoint exposes them all.',
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({}),
   output: z.object({
     dimensions: z

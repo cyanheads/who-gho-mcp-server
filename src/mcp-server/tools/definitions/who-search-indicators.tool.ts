@@ -10,12 +10,12 @@ import { getGhoService } from '@/services/gho/gho-service.js';
 export const whoSearchIndicators = tool('who_search_indicators', {
   title: 'Search WHO GHO Indicators',
   description:
-    'Search the WHO Global Health Observatory catalog of 3,059 indicators by keyword in the indicator name. ' +
+    'Search the WHO Global Health Observatory indicator catalog by keyword in the indicator name. ' +
     'Returns indicator codes and names for use with who_query_indicator_data. ' +
     'The search uses a substring match on indicator names — try terms like "life expectancy", ' +
     '"immunization", "mortality", "diabetes", or "HIV". ' +
     'If results are truncated, refine the query or use who_list_indicators to browse by offset.',
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     query: z
       .string()

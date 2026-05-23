@@ -22,7 +22,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     'Omitting all spatial filters returns all geographies (may be large; use limit to cap). ' +
     'The sex filter applies as Dim1Type=SEX — if the indicator does not use SEX as Dim1, the filter ' +
     'returns empty rows; check who_get_indicator_metadata first if uncertain.',
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_code: z
       .string()
@@ -251,12 +251,10 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       const dim2 = row.dim2Type ? ` | ${row.dim2Type}: ${row.dim2}` : '';
       const displayPart = row.displayValue ? ` display=${row.displayValue}` : '';
       const numericPart = row.numericValue != null ? ` numeric=${row.numericValue}` : '';
-      const lowPart = row.low != null ? ` low=${row.low}` : '';
-      const highPart = row.high != null ? ` high=${row.high}` : '';
       const uncertainty = row.low != null && row.high != null ? ` [${row.low}–${row.high}]` : '';
       const comments = row.comments ? ` — ${row.comments}` : '';
       lines.push(
-        `- [${row.indicatorCode}] **${row.year}** | ${spatial}${dim1}${dim2}${displayPart}${numericPart}${lowPart}${highPart}${uncertainty}${comments}`,
+        `- [${row.indicatorCode}] **${row.year}** | ${spatial}${dim1}${dim2}${displayPart}${numericPart}${uncertainty}${comments}`,
       );
     }
     return [{ type: 'text', text: lines.join('\n') }];
