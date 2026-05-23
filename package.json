@@ -1,7 +1,7 @@
 {
-  "name": "who-gho-mcp-server",
+  "name": "@cyanheads/who-gho-mcp-server",
   "version": "0.1.0",
-  "description": "",
+  "description": "MCP server for the WHO Global Health Observatory — 3,059 global health indicators across 194 member states with country, region, year, and sex filters.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -37,10 +37,21 @@
     "start:stdio": "MCP_TRANSPORT_TYPE=stdio node dist/index.js",
     "start:http": "MCP_TRANSPORT_TYPE=http node dist/index.js"
   },
-  "keywords": ["mcp", "mcp-server", "model-context-protocol"],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "who",
+    "gho",
+    "global-health",
+    "health-data",
+    "global-health-observatory",
+    "odata",
+    "public-health"
+  ],
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/cyanheads/who-gho-mcp-server"
   },
   "license": "Apache-2.0",
   "engines": {
