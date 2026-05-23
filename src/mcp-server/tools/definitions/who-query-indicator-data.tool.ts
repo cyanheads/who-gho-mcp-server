@@ -42,7 +42,11 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .optional()
       .describe(
         'WHO region codes to filter on, e.g. ["AFR","EUR","AMR","EMR","SEAR","WPR"]. ' +
-          'Use who_list_dimension_values with dimension="REGION" to see all valid codes. ' +
+          'Returns the aggregate row for each named WHO region — not per-country rows within it. ' +
+          'To get country-level data for a region, use who_list_dimension_values with ' +
+          'dimension="COUNTRY" and filter by parentCode to retrieve the ISO codes for countries ' +
+          'in that region, then pass those to country_codes. ' +
+          'Use who_list_dimension_values with dimension="REGION" to see all valid region codes. ' +
           'Mutually exclusive with country_codes and income_group_codes.',
       ),
     income_group_codes: z
