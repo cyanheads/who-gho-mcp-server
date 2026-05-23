@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.2](changelog/0.1.x/0.1.2.md) — 2026-05-23
+
+Fix indicator name resolution and document region_codes aggregate behavior
+
 ## [0.1.1](changelog/0.1.x/0.1.1.md) — 2026-05-23
 
 Initial public release — WHO GHO MCP server, 6 tools and 2 resources for 3,059 Global Health Observatory indicators across 194 member states
