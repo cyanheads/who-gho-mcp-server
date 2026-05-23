@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "who-gho-mcp-server",
-  "description": "",
+  "name": "cyanheads/who-gho-mcp-server",
+  "description": "MCP server exposing the WHO Global Health Observatory API — 3,059 global health indicators across 194 member states with country, region, year, and sex filters.",
   "repository": {
-    "url": "",
+    "url": "https://github.com/cyanheads/who-gho-mcp-server",
     "source": "github"
   },
   "version": "0.1.0",

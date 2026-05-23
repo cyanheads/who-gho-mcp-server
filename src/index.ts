@@ -5,17 +5,34 @@
  */
 
 import { createApp } from '@cyanheads/mcp-ts-core';
-import { echoTool } from './mcp-server/tools/definitions/echo.tool.js';
-import { echoAppTool } from './mcp-server/tools/definitions/echo-app.app-tool.js';
-import { echoResource } from './mcp-server/resources/definitions/echo.resource.js';
-import { echoAppUiResource } from './mcp-server/resources/definitions/echo-app-ui.app-resource.js';
-import { echoPrompt } from './mcp-server/prompts/definitions/echo.prompt.js';
+import { whoDimensionValuesResource } from './mcp-server/resources/definitions/who-dimension-values.resource.js';
+import { whoIndicatorMetadataResource } from './mcp-server/resources/definitions/who-indicator-metadata.resource.js';
+import { whoGetIndicatorMetadata } from './mcp-server/tools/definitions/who-get-indicator-metadata.tool.js';
+import { whoListDimensionValues } from './mcp-server/tools/definitions/who-list-dimension-values.tool.js';
+import { whoListDimensions } from './mcp-server/tools/definitions/who-list-dimensions.tool.js';
+import { whoListIndicators } from './mcp-server/tools/definitions/who-list-indicators.tool.js';
+import { whoQueryIndicatorData } from './mcp-server/tools/definitions/who-query-indicator-data.tool.js';
+import { whoSearchIndicators } from './mcp-server/tools/definitions/who-search-indicators.tool.js';
+import { initGhoService } from './services/gho/gho-service.js';
 
 await createApp({
-  tools: [echoTool, echoAppTool],
-  resources: [echoResource, echoAppUiResource],
-  prompts: [echoPrompt],
-  // instructions: 'Server-level orientation forwarded to the model on every initialize.\n' +
-  //   '- Use shortcut `X` for the most common case\n' +
-  //   '- Tools require auth via the `inventory:read` scope',
+  tools: [
+    whoListDimensions,
+    whoListDimensionValues,
+    whoSearchIndicators,
+    whoListIndicators,
+    whoGetIndicatorMetadata,
+    whoQueryIndicatorData,
+  ],
+  resources: [whoIndicatorMetadataResource, whoDimensionValuesResource],
+  prompts: [],
+  instructions:
+    'WHO Global Health Observatory MCP server. Primary workflow: ' +
+    '(1) who_search_indicators to find indicator codes by keyword, ' +
+    '(2) who_get_indicator_metadata to confirm valid filter dimensions, ' +
+    '(3) who_query_indicator_data to fetch data with country/region/year/sex filters. ' +
+    'Use who_list_dimensions → who_list_dimension_values to discover valid filter codes.',
+  setup(core) {
+    initGhoService(core.config, core.storage);
+  },
 });
