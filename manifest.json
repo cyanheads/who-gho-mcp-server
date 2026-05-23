@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "who-gho-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for the WHO Global Health Observatory — 3,059 global health indicators across 194 member states.",
   "author": { "name": "cyanheads" },
   "server": {
