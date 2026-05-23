@@ -74,11 +74,11 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   async handler(input, ctx) {
     ctx.log.info('Fetching indicator metadata', { codes: input.indicator_codes });
 
-    // Fan out all lookups in parallel: dimension metadata + indicator names (one search per code)
+    // Fan out all lookups in parallel: dimension metadata + indicator names (exact code lookup)
     const [dimMap, ...nameResults] = await Promise.all([
       getGhoService().getIndicatorDimensions(input.indicator_codes, ctx),
       ...input.indicator_codes.map((code) =>
-        getGhoService().listIndicators({ query: code, limit: 5, offset: 0 }, ctx),
+        getGhoService().listIndicators({ indicatorCode: code, limit: 1, offset: 0 }, ctx),
       ),
     ]);
 

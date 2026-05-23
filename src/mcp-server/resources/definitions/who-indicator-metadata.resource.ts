@@ -40,9 +40,9 @@ export const whoIndicatorMetadataResource = resource('who://indicator/{indicator
         { indicatorCode: params.indicatorCode },
       );
     }
-    // Look up name
+    // Look up name via exact-code filter
     const nameResult = await getGhoService().listIndicators(
-      { query: params.indicatorCode, limit: 5, offset: 0 },
+      { indicatorCode: params.indicatorCode, limit: 1, offset: 0 },
       ctx,
     );
     const match = nameResult.indicators.find((i) => i.indicatorCode === params.indicatorCode);

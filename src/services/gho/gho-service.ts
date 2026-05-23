@@ -38,9 +38,9 @@ export class GhoService {
     this.timeoutMs = serverCfg.requestTimeoutMs;
   }
 
-  /** Fetch the indicator catalog with optional keyword search. */
+  /** Fetch the indicator catalog with optional keyword search or exact-code lookup. */
   listIndicators(
-    params: { query?: string; limit: number; offset: number },
+    params: { query?: string; indicatorCode?: string; limit: number; offset: number },
     ctx: Context,
   ): Promise<{ indicators: Indicator[]; total: number }> {
     return withRetry(
@@ -50,7 +50,10 @@ export class GhoService {
           $skip: String(params.offset),
           $count: 'true',
         });
-        if (params.query) {
+        if (params.indicatorCode) {
+          // Exact match by code — codes are not substrings of names, so contains() fails here.
+          qs.set('$filter', `IndicatorCode eq '${this.escapeODataString(params.indicatorCode)}'`);
+        } else if (params.query) {
           qs.set('$filter', `contains(IndicatorName,'${this.escapeODataString(params.query)}')`);
         }
         const url = `${this.baseUrl}/Indicator?${qs}`;
