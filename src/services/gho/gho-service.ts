@@ -88,13 +88,13 @@ export class GhoService {
       async () => {
         const url = `${this.baseUrl}/DIMENSION/${encodeURIComponent(dimensionCode)}/DimensionValues`;
         const data = await this.getJson<ODataEnvelope<RawDimensionValue>>(url, ctx);
-        return data.value.map((v) => {
-          const entry: DimensionValue = { code: v.Code, label: v.Title };
-          if (v.ParentCode) entry.parentCode = v.ParentCode;
-          if (v.ParentTitle) entry.parentLabel = v.ParentTitle;
-          if (v.ParentDimension) entry.parentDimension = v.ParentDimension;
-          return entry;
-        });
+        return data.value.map((v) => ({
+          code: v.Code,
+          label: v.Title,
+          ...(v.ParentCode && { parentCode: v.ParentCode }),
+          ...(v.ParentTitle && { parentLabel: v.ParentTitle }),
+          ...(v.ParentDimension && { parentDimension: v.ParentDimension }),
+        }));
       },
       { operation: 'GhoService.listDimensionValues', signal: ctx.signal },
     );
@@ -222,7 +222,7 @@ export class GhoService {
         }
 
         // GHO API returns {"error": {...}} when the OData query is rejected (e.g. malformed filter).
-        if ('error' in data && (data as { error: unknown }).error) {
+        if ('error' in data) {
           const oErr = (data as { error: { message?: string } }).error;
           throw serviceUnavailable(oErr.message ?? 'GHO API returned an OData error response.', {
             url,
@@ -239,25 +239,22 @@ export class GhoService {
   }
 
   private normalizeRow(r: RawDataRow, includeUncertainty: boolean): DataRow {
-    const row: DataRow = {
+    return {
       indicatorCode: r.IndicatorCode,
       year: r.TimeDim ?? 0,
+      ...(r.SpatialDimType && { spatialDimType: r.SpatialDimType }),
+      ...(r.SpatialDim && { spatialDim: r.SpatialDim }),
+      ...(r.ParentLocation && { spatialLabel: r.ParentLocation }),
+      ...(r.Dim1Type && { dim1Type: r.Dim1Type }),
+      ...(r.Dim1 && { dim1: r.Dim1 }),
+      ...(r.Dim2Type && { dim2Type: r.Dim2Type }),
+      ...(r.Dim2 && { dim2: r.Dim2 }),
+      ...(r.NumericValue != null && { numericValue: r.NumericValue }),
+      ...(includeUncertainty && r.Low != null && { low: r.Low }),
+      ...(includeUncertainty && r.High != null && { high: r.High }),
+      ...(r.Value && { displayValue: r.Value }),
+      ...(r.Comments && { comments: r.Comments }),
     };
-    if (r.SpatialDimType) row.spatialDimType = r.SpatialDimType;
-    if (r.SpatialDim) row.spatialDim = r.SpatialDim;
-    if (r.ParentLocation) row.spatialLabel = r.ParentLocation;
-    if (r.Dim1Type) row.dim1Type = r.Dim1Type;
-    if (r.Dim1) row.dim1 = r.Dim1;
-    if (r.Dim2Type) row.dim2Type = r.Dim2Type;
-    if (r.Dim2) row.dim2 = r.Dim2;
-    if (r.NumericValue != null) row.numericValue = r.NumericValue;
-    if (includeUncertainty) {
-      if (r.Low != null) row.low = r.Low;
-      if (r.High != null) row.high = r.High;
-    }
-    if (r.Value) row.displayValue = r.Value;
-    if (r.Comments) row.comments = r.Comments;
-    return row;
   }
 
   /**
@@ -271,7 +268,7 @@ export class GhoService {
     ctx.signal.addEventListener('abort', onAbort, { once: true });
     try {
       return await fetch(url, { signal: controller.signal });
-    } catch (err) {
+    } catch (err: unknown) {
       if (ctx.signal.aborted) {
         throw serviceUnavailable('Request cancelled.', { url });
       }

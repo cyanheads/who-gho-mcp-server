@@ -183,7 +183,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     },
     {
       reason: 'ambiguous_spatial_filter',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'More than one of country_codes, region_codes, or income_group_codes were provided.',
       recovery:
         'Provide only one spatial filter type per call. To compare countries and regions, make separate calls.',

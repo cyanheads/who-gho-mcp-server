@@ -74,11 +74,12 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   async handler(input, ctx) {
     ctx.log.info('Fetching indicator metadata', { codes: input.indicator_codes });
 
+    const svc = getGhoService();
     // Fan out all lookups in parallel: dimension metadata + indicator names (exact code lookup)
     const [dimMap, ...nameResults] = await Promise.all([
-      getGhoService().getIndicatorDimensions(input.indicator_codes, ctx),
+      svc.getIndicatorDimensions(input.indicator_codes, ctx),
       ...input.indicator_codes.map((code) =>
-        getGhoService().listIndicators({ indicatorCode: code, limit: 1, offset: 0 }, ctx),
+        svc.listIndicators({ indicatorCode: code, limit: 1, offset: 0 }, ctx),
       ),
     ]);
 
@@ -87,10 +88,8 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     for (let i = 0; i < input.indicator_codes.length; i++) {
       const code = input.indicator_codes[i];
       const result = nameResults[i];
-      if (code && result && 'indicators' in result) {
-        const match = result.indicators.find(
-          (ind: { indicatorCode: string; indicatorName: string }) => ind.indicatorCode === code,
-        );
+      if (code && result) {
+        const match = result.indicators.find((ind) => ind.indicatorCode === code);
         if (match) nameMap.set(code, match.indicatorName);
       }
     }

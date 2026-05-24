@@ -32,7 +32,12 @@ export const whoIndicatorMetadataResource = resource('who://indicator/{indicator
   }),
 
   async handler(params, ctx) {
-    const dimMap = await getGhoService().getIndicatorDimensions([params.indicatorCode], ctx);
+    const svc = getGhoService();
+    // Fetch dimension metadata and indicator name in parallel
+    const [dimMap, nameResult] = await Promise.all([
+      svc.getIndicatorDimensions([params.indicatorCode], ctx),
+      svc.listIndicators({ indicatorCode: params.indicatorCode, limit: 1, offset: 0 }, ctx),
+    ]);
     const dims = dimMap.get(params.indicatorCode);
     if (!dims) {
       throw notFound(
@@ -40,11 +45,6 @@ export const whoIndicatorMetadataResource = resource('who://indicator/{indicator
         { indicatorCode: params.indicatorCode },
       );
     }
-    // Look up name via exact-code filter
-    const nameResult = await getGhoService().listIndicators(
-      { indicatorCode: params.indicatorCode, limit: 1, offset: 0 },
-      ctx,
-    );
     const match = nameResult.indicators.find((i) => i.indicatorCode === params.indicatorCode);
     return {
       indicatorCode: params.indicatorCode,
