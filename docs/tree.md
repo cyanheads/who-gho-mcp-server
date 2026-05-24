@@ -1,10 +1,9 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-05-23 18:11:07
+Generated on: 2026-05-24 04:57:27
 
 ```text
 who-gho-mcp-server/
-├── .claude/
 ├── .github/
 │   └── ISSUE_TEMPLATE/
 │       ├── bug_report.yml
@@ -143,6 +142,7 @@ who-gho-mcp-server/
 ├── .mcpbignore
 ├── biome.json
 ├── bun.lock
+├── bunfig.toml
 ├── CHANGELOG.md
 ├── CLAUDE.md
 ├── devcheck.config.json
