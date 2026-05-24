@@ -20,8 +20,8 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     'Spatial filters are mutually exclusive per call: provide only one of country_codes, region_codes, ' +
     'or income_group_codes — mixing them triggers an error. ' +
     'Omitting all spatial filters returns all geographies (may be large; use limit to cap). ' +
-    'The sex filter applies as Dim1Type=SEX — if the indicator does not use SEX as Dim1, the filter ' +
-    'returns empty rows; check who_get_indicator_metadata first if uncertain.',
+    'The sex filter only applies when the indicator uses SEX as its first cross-cutting dimension — ' +
+    'if not, the filter returns empty rows; check who_get_indicator_metadata first if uncertain.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_code: z
@@ -78,8 +78,8 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .string()
       .optional()
       .describe(
-        'Arbitrary Dim1 value filter for indicators whose first cross-cutting dimension is not SEX ' +
-          '(e.g. an AGEGROUP code). Ignored when sex is also provided.',
+        'Value filter for indicators whose first cross-cutting dimension is not SEX ' +
+          '(e.g. an AGEGROUP code like "YEARS05-14"). Ignored when sex is also provided.',
       ),
     include_uncertainty: z
       .boolean()
