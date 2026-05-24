@@ -221,6 +221,14 @@ export class GhoService {
           throw serviceUnavailable('GHO API returned unparseable response.');
         }
 
+        // GHO API returns {"error": {...}} when the OData query is rejected (e.g. malformed filter).
+        if ('error' in data && (data as { error: unknown }).error) {
+          const oErr = (data as { error: { message?: string } }).error;
+          throw serviceUnavailable(oErr.message ?? 'GHO API returned an OData error response.', {
+            url,
+          });
+        }
+
         const totalRows = data['@odata.count'] ?? data.value.length;
         const rows = data.value.map((r) => this.normalizeRow(r, params.includeUncertainty));
 
