@@ -1,8 +1,8 @@
 {
   "name": "@cyanheads/who-gho-mcp-server",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "mcpName": "io.github.cyanheads/who-gho-mcp-server",
-  "description": "MCP server for the WHO Global Health Observatory — 3,059 global health indicators across 194 member states with country, region, year, and sex filters.",
+  "description": "WHO Global Health Observatory — 3,059 indicators across 194 member states.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
