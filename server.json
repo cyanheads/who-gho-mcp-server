@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "cyanheads/who-gho-mcp-server",
+  "name": "io.github.cyanheads/who-gho-mcp-server",
   "description": "WHO Global Health Observatory MCP server — 3,059 health indicators across 194 member states.",
   "repository": {
     "url": "https://github.com/cyanheads/who-gho-mcp-server",
     "source": "github"
   },
-  "version": "0.1.2",
+  "version": "0.1.3",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/who-gho-mcp-server",
-      "runtimeHint": "node",
-      "version": "0.1.2",
+      "runtimeHint": "bun",
+      "version": "0.1.3",
       "packageArguments": [
         {
           "type": "positional",
@@ -41,8 +41,8 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/who-gho-mcp-server",
-      "runtimeHint": "node",
-      "version": "0.1.2",
+      "runtimeHint": "bun",
+      "version": "0.1.3",
       "packageArguments": [
         {
           "type": "positional",

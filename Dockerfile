@@ -37,9 +37,10 @@ WORKDIR /usr/src/app
 ENV NODE_ENV=production
 
 # OCI image metadata (https://github.com/opencontainers/image-spec/blob/main/annotations.md)
-LABEL org.opencontainers.image.title="who-gho-mcp-server"
-LABEL org.opencontainers.image.description=""
+LABEL org.opencontainers.image.title="@cyanheads/who-gho-mcp-server"
+LABEL org.opencontainers.image.description="MCP server for the WHO Global Health Observatory — 3,059 global health indicators across 194 member states with country, region, year, and sex filters."
 LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.source="https://github.com/cyanheads/who-gho-mcp-server"
 
 # Copy dependency manifests
 COPY package.json bun.lock ./
