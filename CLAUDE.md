@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** @cyanheads/who-gho-mcp-server
-**Version:** 0.1.6
+**Version:** 0.1.7
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.7`
 **Engines:** Bun ≥1.3.2, Node ≥24.0.0
 
