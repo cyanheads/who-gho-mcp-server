@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.5](changelog/0.1.x/0.1.5.md) — 2026-05-23
+
+Metadata alignment: Dockerfile restored to oven/bun:1.3, scripts migrated from tsx to bun, .env.example restructured, tsx devDependency removed
+
 ## [0.1.4](changelog/0.1.x/0.1.4.md) — 2026-05-23
 
 Sync canonical tagline across all metadata surfaces

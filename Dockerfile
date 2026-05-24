@@ -1,17 +1,9 @@
 # ==============================================================================
 # Build Stage
-#
-# Uses a real Node.js image so that tsx runs under a proper Node runtime.
-# The oven/bun image provides a `node` shim that actually runs Bun — Bun's
-# module resolver can't locate tsx's CJS entry on Linux arm64, causing the
-# build to fail. Node LTS resolves tsx correctly via the standard CJS loader.
 # ==============================================================================
-FROM node:24-slim AS build
+FROM oven/bun:1.3 AS build
 
 WORKDIR /usr/src/app
-
-# Install bun for dependency resolution (bun.lock format)
-RUN npm install -g bun@1.3
 
 # Copy dependency manifests for optimized layer caching
 COPY package.json bun.lock ./
@@ -23,7 +15,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 # Build the application
-RUN npm run build
+RUN bun run build
 
 
 # ==============================================================================
@@ -43,7 +35,7 @@ ENV NODE_ENV=production
 
 # OCI image metadata (https://github.com/opencontainers/image-spec/blob/main/annotations.md)
 LABEL org.opencontainers.image.title="@cyanheads/who-gho-mcp-server"
-LABEL org.opencontainers.image.description="MCP server for the WHO Global Health Observatory — 3,059 global health indicators across 194 member states with country, region, year, and sex filters."
+LABEL org.opencontainers.image.description="Query WHO Global Health Observatory data — 3,059 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP."
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.source="https://github.com/cyanheads/who-gho-mcp-server"
 

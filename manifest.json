@@ -1,9 +1,11 @@
 {
   "manifest_version": "0.3",
   "name": "who-gho-mcp-server",
-  "version": "0.1.4",
-  "description": "WHO Global Health Observatory — 3,059 indicators across 194 member states.",
-  "author": { "name": "cyanheads" },
+  "version": "0.1.5",
+  "description": "Query WHO Global Health Observatory data \u2014 3,059 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "cyanheads"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/cyanheads/who-gho-mcp-server"
@@ -24,7 +26,9 @@
     }
   },
   "compatibility": {
-    "runtimes": { "node": ">=24.0.0" }
+    "runtimes": {
+      "node": ">=24.0.0"
+    }
   },
   "tools_generated": true,
   "prompts_generated": true,

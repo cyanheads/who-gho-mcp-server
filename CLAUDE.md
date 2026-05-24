@@ -1,11 +1,9 @@
-# Developer Protocol
+# Agent Protocol
 
-**Server:** who-gho-mcp-server
-**Version:** 0.1.4
+**Server:** @cyanheads/who-gho-mcp-server
+**Version:** 0.1.5
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.7`
-**Engines:** Bun ≥1.3.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
-**Zod:** ^4.4.3
+**Engines:** Bun ≥1.3.2, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
@@ -13,7 +11,7 @@
 
 ## What's Next?
 
-When the user asks what's next or needs direction, suggest options based on the current project state. Common next steps:
+When the user asks what to do next, what's left, or needs direction, suggest relevant options based on the current project state:
 
 1. **Re-run the `setup` skill** — ensures CLAUDE.md, skills, structure, and metadata are populated and up to date with the current codebase
 2. **Run the `design-mcp-server` skill** — if the tool/resource surface hasn't been mapped yet, work through domain design
@@ -251,21 +249,24 @@ Available skills:
 | `add-service` | Scaffold a new service integration |
 | `add-test` | Scaffold test file for a tool, resource, or service |
 | `field-test` | Exercise tools/resources/prompts with real inputs, verify behavior, report issues |
+| `tool-defs-analysis` | Read-only audit of definition language: voice, leaks, defaults, recovery hints, examples |
 | `security-pass` | Audit server for MCP-flavored security gaps: output injection, scope blast radius, input sinks, tenant isolation |
 | `devcheck` | Lint, format, typecheck, audit |
 | `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
-| `maintenance` | Investigate changelogs, adopt upstream changes, sync skills to agent dirs |
-| `report-issue-framework` | File a bug or feature request against `@cyanheads/mcp-ts-core` via `gh` CLI |
-| `report-issue-local` | File a bug or feature request against this server's own repo via `gh` CLI |
+| `maintenance` | Investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest` |
+| `release-and-publish` | Ship a release: verification gate, push commits+tags, publish to npm / MCP Registry / GHCR / `.mcpb` bundle on GitHub Releases |
+| `report-issue-framework` | File bug/feature request against @cyanheads/mcp-ts-core |
+| `report-issue-local` | File bug/feature request against this server's repo |
 | `api-auth` | Auth modes, scopes, JWT/OAuth |
 | `api-canvas` | DataCanvas: register tabular data, run SQL, export, plus the `spillover()` helper for big result sets — Tier 3 opt-in |
 | `api-config` | AppConfig, parseConfig, env vars |
 | `api-context` | Context interface, logger, state, progress |
 | `api-errors` | McpError, JsonRpcErrorCode, error patterns |
+| `api-linter` | Definition lint rules reference (`format-parity`, `schema-*`, `server-json-*`, …) |
 | `api-services` | LLM, Speech, Graph services |
+| `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
 | `api-testing` | createMockContext, test patterns |
 | `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
-| `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
 | `api-workers` | Cloudflare Workers runtime |
 
 When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
@@ -274,72 +275,53 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Commands
 
-**Runtime:** Scripts use `tsx` — both `npm run <cmd>` and `bun run <cmd>` work. `bun` is slightly faster for script invocation but not required.
-
 | Command | Purpose |
 |:--------|:--------|
-| `npm run build` | Compile TypeScript |
-| `npm run rebuild` | Clean + build |
-| `npm run clean` | Remove build artifacts |
-| `npm run devcheck` | Lint + format + typecheck + security + changelog sync |
-| `bun run audit:refresh` | Delete `bun.lock`, reinstall, re-audit. Use when `devcheck` flags a transitive advisory — stale lockfile can mask already-patched deps. If advisory survives, it's real. |
-| `npm run tree` | Generate directory structure doc |
-| `npm run format` | Auto-fix formatting |
-| `npm test` | Run tests |
-| `npm run start:stdio` | Production mode (stdio) |
-| `npm run start:http` | Production mode (HTTP) |
-| `npm run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |
-| `npm run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
-| `npm run bundle` | Build and pack as `.mcpb` for one-click Claude Desktop install |
+| `bun run build` | Compile TypeScript |
+| `bun run rebuild` | Clean + build |
+| `bun run clean` | Remove build artifacts |
+| `bun run devcheck` | Lint + format + typecheck + security + packaging alignment |
+| `bun run audit:refresh` | Delete `bun.lock`, reinstall, and re-run `bun audit`. Use when `devcheck` flags a transitive advisory — `bun update` is sticky on transitive resolutions, so the advisory may be a stale-lockfile false positive. If it survives the refresh, it's real. |
+| `bun run tree` | Generate directory structure doc |
+| `bun run format` | Auto-fix formatting |
+| `bun run test` | Run tests |
+| `bun run lint:mcp` | Validate MCP definitions against spec |
+| `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
+| `bun run list-skills` | List skills in `skills/` with name + description |
+| `bun run bundle` | Build and pack as `dist/who-gho-mcp-server.mcpb` for one-click Claude Desktop install |
+| `bun run start:stdio` | Production mode (stdio) |
+| `bun run start:http` | Production mode (HTTP) |
 
 ---
 
 ## Bundling
 
-`npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
+`bun run bundle` produces `dist/who-gho-mcp-server.mcpb` for one-click install in Claude Desktop. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/who-gho-mcp-server.mcpb` URL that powers the README install badge.
 
-**Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match.
+**Adding an env var requires both files**: `server.json` stdio `environmentVariables[]` (registry discovery) and `manifest.json` `mcp_config.env` (bundle install UX, plus `user_config` if user-prompted). `bun run lint:packaging` (run by `devcheck`) verifies the env var names align.
 
-**README install badges.** Drop these into the project README to give users one-click install paths. Fill in `<OWNER>` / `<REPO>` / `<PACKAGE_NAME>` and encode the per-server config. Cursor + VS Code badges assume the server is published to npm; Claude Desktop downloads the `.mcpb` directly so npm publishing isn't required.
+---
 
-| Client | Mechanism |
-|:-------|:----------|
-| Claude Desktop | Browser downloads the `.mcpb` from the latest GitHub Release; OS file handler routes it to Claude Desktop, which opens the install dialog. No deep-link URL scheme yet — this is the canonical path. |
-| Cursor | Official `https://cursor.com/en/install-mcp` endpoint with base64 JSON config. |
-| VS Code / Insiders | Official `vscode:mcp/install?...` deep link, wrapped in `https://vscode.dev/redirect?url=` so GitHub-rendered markdown doesn't strip the non-HTTP scheme. |
-| Claude Code / Codex | CLI only (`claude mcp add` / `codex mcp add`); no URL scheme. |
+## Publishing
 
-```markdown
-[![Install in Claude Desktop](https://img.shields.io/badge/Install_in-Claude_Desktop-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://github.com/<OWNER>/<REPO>/releases/latest/download/<PACKAGE_NAME>.mcpb)
-[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=<PACKAGE_NAME>&config=<BASE64_CONFIG>)
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode:mcp/install?<URLENCODED_JSON>)
-```
-
-Both install links route through HTTPS endpoints (`cursor.com/en/install-mcp` and `vscode.dev/redirect`) — GitHub-rendered markdown strips non-HTTP URL schemes from anchors, so a raw `cursor://` or `vscode:` link won't click through from github.com.
-
-Generate the encoded configs (replace `<PACKAGE_NAME>` and add env vars for any required API keys):
+Run the `release-and-publish` skill after git wrapup — it runs the verification gate (`devcheck`, `rebuild`, `test`), pushes commits and tags, and publishes to npm, the MCP Registry, GHCR, and attaches the `.mcpb` bundle to the GitHub Release, halting on the first failure. For reference, the underlying commands are:
 
 ```bash
-# Cursor: base64-encoded JSON. Split command/args, add env when keys are needed.
-echo -n '{"command":"npx","args":["-y","<PACKAGE_NAME>"],"env":{"API_KEY":"your-api-key"}}' | base64
-# Without env (no required keys):
-echo -n '{"command":"npx","args":["-y","<PACKAGE_NAME>"]}' | base64
+bun publish --access public
 
-# VS Code: URL-encoded JSON. Same shape plus a `name` field.
-node -p 'encodeURIComponent(JSON.stringify({name:"<SHORT_NAME>",command:"npx",args:["-y","<PACKAGE_NAME>"],env:{API_KEY:"your-api-key"}}))'
-# Without env:
-node -p 'encodeURIComponent(JSON.stringify({name:"<SHORT_NAME>",command:"npx",args:["-y","<PACKAGE_NAME>"]}))'
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/cyanheads/who-gho-mcp-server:<version> \
+  -t ghcr.io/cyanheads/who-gho-mcp-server:latest \
+  --push .
+
+mcp-publisher publish
 ```
-
-Both clients use the same `{command, args, env}` shape (matching `mcp.json` schema). VS Code adds a top-level `name` field. Omit `env` entirely when no API keys are needed — don't include empty objects or framework-only vars like `MCP_TRANSPORT_TYPE`.
-
-The Claude Desktop badge requires the bundle to ship with a stable filename — `bun run bundle` outputs `dist/<PACKAGE_NAME>.mcpb`, and `release-and-publish` attaches that file to the GitHub Release. `releases/latest/download/<PACKAGE_NAME>.mcpb` then redirects to the most recent release.
 
 ---
 
 ## Changelog
 
-Directory-based, grouped by minor series via the `.x` semver-wildcard convention. Source of truth: `changelog/<major.minor>.x/<version>.md` (e.g. `changelog/0.1.x/0.1.0.md`) — one file per release, shipped in the npm package. At release, author the per-version file with a concrete version and date, then run `npm run changelog:build` to regenerate the rollup. `changelog/template.md` is a **pristine format reference** — never edited or moved; read it for the frontmatter + section layout when scaffolding. `CHANGELOG.md` is a **navigation index** (header + link + summary per version), regenerated by `npm run changelog:build` — devcheck hard-fails on drift; never hand-edit it.
+Directory-based, grouped by minor series via the `.x` semver-wildcard convention. Source of truth: `changelog/<major.minor>.x/<version>.md` (e.g. `changelog/0.1.x/0.1.0.md`) — one file per release, shipped in the npm package. At release, author the per-version file with a concrete version and date, then run `bun run changelog:build` to regenerate the rollup. `changelog/template.md` is a **pristine format reference** — never edited or moved; read it for the frontmatter + section layout when scaffolding. `CHANGELOG.md` is a **navigation index** (header + link + summary per version), regenerated by `bun run changelog:build` — devcheck hard-fails on drift; never hand-edit it.
 
 Each per-version file opens with YAML frontmatter:
 
@@ -388,4 +370,4 @@ import { getMyService } from '@/services/my-domain/my-service.js';
 - [ ] If wrapping external API: tests include at least one sparse payload case with omitted upstream fields
 - [ ] Registered in `createApp()` arrays (directly or via barrel exports)
 - [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
-- [ ] `npm run devcheck` passes
+- [ ] `bun run devcheck` passes
