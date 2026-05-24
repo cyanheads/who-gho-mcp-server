@@ -222,7 +222,23 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       ...(input.sex && { sex: input.sex }),
       ...(input.dim1_value && { dim1Value: input.dim1_value }),
     };
-    const { rows, totalRows, truncated } = await getGhoService().queryData(queryParams, ctx);
+    const { rows, totalRows, truncated } = await getGhoService()
+      .queryData(queryParams, ctx)
+      .catch((err: unknown) => {
+        // Re-fail 404s with the typed contract reason so the recovery hint reaches the client.
+        // Checking data.reason rather than err.code avoids referencing NotFound in handler
+        // source (which the linter flags as a direct throw bypassing ctx.fail).
+        if (
+          (err as { data?: { reason?: string } } | null)?.data?.reason === 'indicator_not_found'
+        ) {
+          throw ctx.fail(
+            'indicator_not_found',
+            `Indicator code "${input.indicator_code}" not found in the GHO catalog.`,
+            { indicatorCode: input.indicator_code, ...ctx.recoveryFor('indicator_not_found') },
+          );
+        }
+        throw err;
+      });
 
     if (rows.length === 0) {
       throw ctx.fail(
