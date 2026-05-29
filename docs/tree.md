@@ -1,9 +1,14 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-05-24 21:56:21
+Generated on: 2026-05-29 05:47:59
 
 ```text
 who-gho-mcp-server/
+├── .claude-plugin/
+│   └── plugin.json
+├── .codex-plugin/
+│   ├── mcp.json
+│   └── plugin.json
 ├── .github/
 │   └── ISSUE_TEMPLATE/
 │       ├── bug_report.yml
@@ -74,6 +79,8 @@ who-gho-mcp-server/
 │   │   └── SKILL.md
 │   ├── api-workers/
 │   │   └── SKILL.md
+│   ├── code-simplifier/
+│   │   └── SKILL.md
 │   ├── design-mcp-server/
 │   │   └── SKILL.md
 │   ├── field-test/
@@ -81,8 +88,6 @@ who-gho-mcp-server/
 │   ├── git-wrapup/
 │   │   └── SKILL.md
 │   ├── maintenance/
-│   │   └── SKILL.md
-│   ├── migrate-mcp-ts-template/
 │   │   └── SKILL.md
 │   ├── polish-docs-meta/
 │   │   ├── references/
@@ -146,6 +151,7 @@ who-gho-mcp-server/
 ├── bun.lock
 ├── bunfig.toml
 ├── CHANGELOG.md
+├── CITATION.cff
 ├── CLAUDE.md
 ├── devcheck.config.json
 ├── Dockerfile
