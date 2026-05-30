@@ -3,7 +3,7 @@
  * @module tests/tools/who-query-indicator-data.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoQueryIndicatorData } from '@/mcp-server/tools/definitions/who-query-indicator-data.tool.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
@@ -28,7 +28,7 @@ describe('whoQueryIndicatorData', () => {
     vi.clearAllMocks();
   });
 
-  it('returns data rows for a valid query', async () => {
+  it('returns data rows with enrichment for a valid query', async () => {
     mockService.queryData.mockResolvedValue({
       rows: [sampleRow],
       totalRows: 1,
@@ -41,12 +41,17 @@ describe('whoQueryIndicatorData', () => {
     });
     const result = await whoQueryIndicatorData.handler(input, ctx);
     expect(result.rows).toHaveLength(1);
-    expect(result.totalRows).toBe(1);
-    expect(result.truncated).toBe(false);
-    expect(result.truncatedNote).toBeUndefined();
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalRows).toBe(1);
+    expect(enrichment.appliedFilters).toMatchObject({
+      indicatorCode: 'WHOSIS_000001',
+      spatialFilter: 'country_codes: JPN',
+    });
+    expect(enrichment.notice).toBeUndefined();
   });
 
-  it('includes truncatedNote when results are truncated', async () => {
+  it('sets truncation notice in enrichment when results are truncated', async () => {
     mockService.queryData.mockResolvedValue({
       rows: Array.from({ length: 200 }, (_, i) => ({ ...sampleRow, year: 2000 + i })),
       totalRows: 5000,
@@ -55,9 +60,30 @@ describe('whoQueryIndicatorData', () => {
     const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
     const input = whoQueryIndicatorData.input.parse({ indicator_code: 'WHOSIS_000001' });
     const result = await whoQueryIndicatorData.handler(input, ctx);
-    expect(result.truncated).toBe(true);
-    expect(result.truncatedNote).toBeDefined();
-    expect(result.truncatedNote).toContain('5000');
+    expect(result.rows).toHaveLength(200);
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalRows).toBe(5000);
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('5000');
+  });
+
+  it('echoes year range and sex filters in enrichment', async () => {
+    mockService.queryData.mockResolvedValue({ rows: [sampleRow], totalRows: 1, truncated: false });
+    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+    const input = whoQueryIndicatorData.input.parse({
+      indicator_code: 'WHOSIS_000001',
+      year_from: 2010,
+      year_to: 2020,
+      sex: 'SEX_FMLE',
+    });
+    await whoQueryIndicatorData.handler(input, ctx);
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.appliedFilters).toMatchObject({
+      yearRange: '2010–2020',
+      sex: 'SEX_FMLE',
+    });
   });
 
   it('throws ambiguous_spatial_filter when multiple spatial types provided', async () => {
@@ -104,8 +130,6 @@ describe('whoQueryIndicatorData', () => {
           comments: 'Estimated',
         },
       ],
-      totalRows: 1,
-      truncated: false,
     };
     const blocks = whoQueryIndicatorData.format!(output);
     const text = (blocks[0] as { type: 'text'; text: string }).text;
@@ -128,24 +152,10 @@ describe('whoQueryIndicatorData', () => {
           year: 2020,
         },
       ],
-      totalRows: 1,
-      truncated: false,
     };
     const blocks = whoQueryIndicatorData.format!(output);
     const text = (blocks[0] as { type: 'text'; text: string }).text;
     expect(text).toContain('WHOSIS_000001');
     expect(text).toContain('2020');
-  });
-
-  it('formats truncated output with note', () => {
-    const output = {
-      rows: [{ indicatorCode: 'CODE', year: 2020, numericValue: 1.0 }],
-      totalRows: 5000,
-      truncated: true,
-      truncatedNote: 'Showing 200 of 5000 rows.',
-    };
-    const blocks = whoQueryIndicatorData.format!(output);
-    const text = (blocks[0] as { type: 'text'; text: string }).text;
-    expect(text).toContain('Showing 200 of 5000 rows');
   });
 });

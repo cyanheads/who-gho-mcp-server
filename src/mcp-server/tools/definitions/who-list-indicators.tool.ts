@@ -45,9 +45,19 @@ export const whoListIndicators = tool('who_list_indicators', {
           .describe('An indicator entry with its code and name.'),
       )
       .describe('Indicators for the requested page.'),
-    total: z.number().describe('Total number of indicators in the GHO catalog.'),
-    hasMore: z.boolean().describe('True when more indicators exist beyond the current page.'),
   }),
+
+  // Agent-facing pagination context: catalog total and whether more pages exist.
+  // Lives in enrichment so it reaches both structuredContent and content[] alike.
+  enrichment: {
+    totalCount: z.number().describe('Total number of indicators in the GHO catalog.'),
+    hasMore: z.boolean().describe('True when more indicators exist beyond the current page.'),
+    pageInfo: z
+      .string()
+      .describe(
+        'Human-readable page position, e.g. "offset 0, showing 50 of 3059". Use to construct the next offset.',
+      ),
+  },
 
   async handler(input, ctx) {
     ctx.log.info('Listing indicators', { limit: input.limit, offset: input.offset });
@@ -55,18 +65,17 @@ export const whoListIndicators = tool('who_list_indicators', {
       { limit: input.limit, offset: input.offset },
       ctx,
     );
-    return {
-      indicators,
-      total,
-      hasMore: input.offset + indicators.length < total,
-    };
+    const hasMore = input.offset + indicators.length < total;
+    ctx.enrich.total(total);
+    ctx.enrich({
+      hasMore,
+      pageInfo: `offset ${input.offset}, showing ${indicators.length} of ${total}`,
+    });
+    return { indicators };
   },
 
   format: (result) => {
-    const lines = [
-      `**Indicators (${result.indicators.length} shown, ${result.total} total, hasMore: ${result.hasMore}):**`,
-      '',
-    ];
+    const lines = [`**Indicators (showing ${result.indicators.length}):**`, ''];
     for (const ind of result.indicators) {
       lines.push(`- **${ind.indicatorCode}**: ${ind.indicatorName}`);
     }

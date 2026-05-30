@@ -46,16 +46,25 @@ export const whoSearchIndicators = tool('who_search_indicators', {
           .describe('An indicator entry with its code and name.'),
       )
       .describe('Matching indicators up to the requested limit.'),
-    totalMatches: z
+  }),
+
+  // Agent-facing result context: the search term as echoed, total catalog matches, and
+  // truncation notice when the limit was reached. Lives in enrichment (not output) so it
+  // reaches structuredContent + content[] alike without a format() entry.
+  enrichment: {
+    effectiveQuery: z
+      .string()
+      .describe('Keyword used for the catalog search, as received by the server.'),
+    totalCount: z
       .number()
-      .describe('Total count of indicators matching the query, before the limit is applied.'),
-    note: z
+      .describe('Total indicators matching the query in the catalog, before the limit is applied.'),
+    notice: z
       .string()
       .optional()
       .describe(
         'Present when the limit was reached and more results exist. Suggests how to get additional results.',
       ),
-  }),
+  },
 
   errors: [
     {
@@ -79,25 +88,20 @@ export const whoSearchIndicators = tool('who_search_indicators', {
       });
     }
     const truncated = total > input.limit;
-    return {
-      indicators,
-      totalMatches: total,
-      ...(truncated && {
-        note: `Showing ${input.limit} of ${total} matches. Refine the query or increase the limit (max 100) to get more targeted results.`,
-      }),
-    };
+    ctx.enrich.echo(input.query);
+    ctx.enrich.total(total);
+    if (truncated) {
+      ctx.enrich.notice(
+        `Showing ${input.limit} of ${total} matches. Refine the query or increase the limit (max 100) to get more targeted results.`,
+      );
+    }
+    return { indicators };
   },
 
   format: (result) => {
-    const lines = [
-      `**Found ${result.totalMatches} indicator${result.totalMatches === 1 ? '' : 's'} (showing ${result.indicators.length}):**`,
-      '',
-    ];
+    const lines = [`**Found indicators (showing ${result.indicators.length}):**`, ''];
     for (const ind of result.indicators) {
       lines.push(`- **${ind.indicatorCode}**: ${ind.indicatorName}`);
-    }
-    if (result.note) {
-      lines.push('', `> ${result.note}`);
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },

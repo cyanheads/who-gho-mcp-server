@@ -152,19 +152,52 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           .describe('A single data row from the GHO indicator dataset.'),
       )
       .describe('Data rows matching the query.'),
+  }),
+
+  // Agent-facing result context: effective filter echo, total row count, and truncation
+  // notice when the limit was reached. Lives in enrichment so it reaches structuredContent
+  // + content[] alike without a format() entry.
+  enrichment: {
+    appliedFilters: z
+      .object({
+        indicatorCode: z.string().describe('Indicator code that was queried.'),
+        spatialFilter: z
+          .string()
+          .optional()
+          .describe(
+            'Active spatial filter summary, e.g. "country_codes: JPN,USA" or "region_codes: EUR".',
+          ),
+        yearRange: z
+          .string()
+          .optional()
+          .describe('Applied year range, e.g. "2015–2023". Absent when no year filter was set.'),
+        sex: z.string().optional().describe('Sex filter value applied, if any.'),
+        dim1Value: z.string().optional().describe('dim1_value filter applied, if any.'),
+      })
+      .describe('Filters that were applied to the query.'),
     totalRows: z
       .number()
       .describe('Total row count matching the query on the server (before the limit is applied).'),
-    truncated: z
-      .boolean()
-      .describe('True when totalRows exceeds the limit and not all rows were returned.'),
-    truncatedNote: z
+    notice: z
       .string()
       .optional()
       .describe(
-        'Present when truncated is true. Explains how to retrieve additional rows, e.g. by narrowing filters or increasing the limit.',
+        'Present when the limit was reached and not all rows were returned. Explains how to retrieve additional rows.',
       ),
-  }),
+  },
+
+  enrichmentTrailer: {
+    appliedFilters: {
+      render: (filters) => {
+        const parts: string[] = [`- **Indicator:** ${filters.indicatorCode}`];
+        if (filters.spatialFilter) parts.push(`- **Spatial:** ${filters.spatialFilter}`);
+        if (filters.yearRange) parts.push(`- **Years:** ${filters.yearRange}`);
+        if (filters.sex) parts.push(`- **Sex:** ${filters.sex}`);
+        if (filters.dim1Value) parts.push(`- **Dim1:** ${filters.dim1Value}`);
+        return `**Applied Filters:**\n${parts.join('\n')}`;
+      },
+    },
+  },
 
   errors: [
     {
@@ -248,21 +281,45 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       );
     }
 
-    const truncatedNote = truncated
-      ? `Showing ${input.limit} of ${totalRows} rows. Narrow the filters (year range, spatial codes) or increase the limit (max 1000) to retrieve more.`
-      : undefined;
+    // Build a human-readable spatial filter summary for the enrichment echo.
+    let spatialFilter: string | undefined;
+    if (input.country_codes?.length)
+      spatialFilter = `country_codes: ${input.country_codes.join(',')}`;
+    else if (input.region_codes?.length)
+      spatialFilter = `region_codes: ${input.region_codes.join(',')}`;
+    else if (input.income_group_codes?.length)
+      spatialFilter = `income_group_codes: ${input.income_group_codes.join(',')}`;
 
-    return { rows, totalRows, truncated, ...(truncatedNote && { truncatedNote }) };
+    const yearRange =
+      input.year_from != null && input.year_to != null
+        ? `${input.year_from}–${input.year_to}`
+        : input.year_from != null
+          ? `from ${input.year_from}`
+          : input.year_to != null
+            ? `to ${input.year_to}`
+            : undefined;
+
+    ctx.enrich({
+      appliedFilters: {
+        indicatorCode: input.indicator_code,
+        ...(spatialFilter && { spatialFilter }),
+        ...(yearRange && { yearRange }),
+        ...(input.sex && { sex: input.sex }),
+        ...(input.dim1_value && { dim1Value: input.dim1_value }),
+      },
+      totalRows,
+    });
+    if (truncated) {
+      ctx.enrich.notice(
+        `Showing ${input.limit} of ${totalRows} rows. Narrow the filters (year range, spatial codes) or increase the limit (max 1000) to retrieve more.`,
+      );
+    }
+
+    return { rows };
   },
 
   format: (result) => {
-    const lines: string[] = [
-      `**Rows: ${result.rows.length} shown${result.truncated ? ` of ${result.totalRows} total (truncated)` : ` of ${result.totalRows} total`}**`,
-      '',
-    ];
-    if (result.truncatedNote) {
-      lines.push(`> ${result.truncatedNote}`, '');
-    }
+    const lines: string[] = [`**Rows returned: ${result.rows.length}**`, ''];
     for (const row of result.rows) {
       const spatial = [row.spatialDimType, row.spatialDim, row.spatialLabel]
         .filter(Boolean)
