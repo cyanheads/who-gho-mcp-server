@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.11](changelog/0.1.x/0.1.11.md) — 2026-06-02
+
+@cyanheads/mcp-ts-core ^0.9.16 → ^0.9.21: per-request log context fix, secret scrubbing in fetchWithTimeout, withRetry fail-fast on non-retryable errors; skill sync (api-mirror, orchestrations)
+
 ## [0.1.10](changelog/0.1.x/0.1.10.md) — 2026-05-30
 
 enrichment adoption: search, list, and query tools now surface query echoes, result totals, applied-filter context, and empty-result guidance in a typed enrichment block

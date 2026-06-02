@@ -1,8 +1,8 @@
 # Agent Protocol
 
 **Server:** @cyanheads/who-gho-mcp-server
-**Version:** 0.1.10
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.16`
+**Version:** 0.1.11
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.21`
 **Engines:** Bun ≥1.3.2, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -272,11 +272,13 @@ Available skills:
 | `api-context` | Context interface, logger, state, progress |
 | `api-errors` | McpError, JsonRpcErrorCode, error patterns |
 | `api-linter` | Definition linter rule catalog — invoked by `bun run lint:mcp` and `devcheck` |
+| `api-mirror` | MirrorService: persistent embedded-SQLite mirror of a bulk upstream dataset (FTS5, sync state machine, Bun/Node) |
 | `api-services` | LLM, Speech, Graph services |
 | `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
 | `api-testing` | createMockContext, test patterns |
 | `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
 | `api-workers` | Cloudflare Workers runtime |
+| `orchestrations` | Multi-phase pipeline workflows for fleet-scale operations across N servers |
 
 When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
 
@@ -298,6 +300,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
 | `bun run list-skills` | List skills in `skills/` with name + description |
 | `bun run bundle` | Build and pack as `dist/who-gho-mcp-server.mcpb` for one-click Claude Desktop install |
+| `bun run release:github` | Create or repair the GitHub Release for the current version tag |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |
 
