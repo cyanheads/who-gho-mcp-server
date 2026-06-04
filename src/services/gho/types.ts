@@ -106,7 +106,7 @@ export interface DataRow {
   spatialDim?: string;
   spatialDimType?: string;
   spatialLabel?: string;
-  year: number;
+  year?: number;
 }
 
 /** Parameters for querying indicator data */

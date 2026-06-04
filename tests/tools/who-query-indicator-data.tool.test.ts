@@ -158,4 +158,32 @@ describe('whoQueryIndicatorData', () => {
     expect(text).toContain('WHOSIS_000001');
     expect(text).toContain('2020');
   });
+
+  it('formats rows with absent year using em dash placeholder', () => {
+    const output = {
+      rows: [
+        {
+          indicatorCode: 'WHOSIS_000001',
+        },
+      ],
+    };
+    const blocks = whoQueryIndicatorData.format!(output);
+    const text = (blocks[0] as { type: 'text'; text: string }).text;
+    expect(text).toContain('WHOSIS_000001');
+    expect(text).not.toContain('undefined');
+    expect(text).toContain('**—**');
+  });
+
+  it('passes rows with absent year through handler without error', async () => {
+    mockService.queryData.mockResolvedValue({
+      rows: [{ indicatorCode: 'WHOSIS_000001' }],
+      totalRows: 1,
+      truncated: false,
+    });
+    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+    const input = whoQueryIndicatorData.input.parse({ indicator_code: 'WHOSIS_000001' });
+    const result = await whoQueryIndicatorData.handler(input, ctx);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.year).toBeUndefined();
+  });
 });

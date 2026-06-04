@@ -241,7 +241,7 @@ export class GhoService {
   private normalizeRow(r: RawDataRow, includeUncertainty: boolean): DataRow {
     return {
       indicatorCode: r.IndicatorCode,
-      year: r.TimeDim ?? 0,
+      ...(r.TimeDim != null && { year: r.TimeDim }),
       ...(r.SpatialDimType && { spatialDimType: r.SpatialDimType }),
       ...(r.SpatialDim && { spatialDim: r.SpatialDim }),
       ...(r.ParentLocation && { spatialLabel: r.ParentLocation }),

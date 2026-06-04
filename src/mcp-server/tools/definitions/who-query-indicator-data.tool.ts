@@ -113,7 +113,12 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
               .string()
               .optional()
               .describe('Human-readable spatial label, e.g. WHO region name for a country row.'),
-            year: z.number().describe('Year of the data point.'),
+            year: z
+              .number()
+              .optional()
+              .describe(
+                'Year of the data point. Absent when the upstream row has no TimeDim (time-independent entries).',
+              ),
             dim1Type: z
               .string()
               .optional()
@@ -330,8 +335,9 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       const numericPart = row.numericValue != null ? ` numeric=${row.numericValue}` : '';
       const uncertainty = row.low != null && row.high != null ? ` [${row.low}–${row.high}]` : '';
       const comments = row.comments ? ` — ${row.comments}` : '';
+      const yearPart = row.year != null ? `**${row.year}**` : '**—**';
       lines.push(
-        `- [${row.indicatorCode}] **${row.year}** | ${spatial}${dim1}${dim2}${displayPart}${numericPart}${uncertainty}${comments}`,
+        `- [${row.indicatorCode}] ${yearPart} | ${spatial}${dim1}${dim2}${displayPart}${numericPart}${uncertainty}${comments}`,
       );
     }
     return [{ type: 'text', text: lines.join('\n') }];
