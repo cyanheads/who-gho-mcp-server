@@ -183,6 +183,13 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     totalRows: z
       .number()
       .describe('Total row count matching the query on the server (before the limit is applied).'),
+    totalCount: z
+      .number()
+      .describe('Alias of totalRows for cross-tool consistency — total rows before the limit.'),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe('True when the result was capped at the requested limit.'),
     notice: z
       .string()
       .optional()
@@ -313,8 +320,10 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         ...(input.dim1_value && { dim1Value: input.dim1_value }),
       },
       totalRows,
+      totalCount: totalRows,
     });
     if (truncated) {
+      ctx.enrich.truncated({ shown: input.limit, cap: input.limit, ceiling: 1000 });
       ctx.enrich.notice(
         `Showing ${input.limit} of ${totalRows} rows. Narrow the filters (year range, spatial codes) or increase the limit (max 1000) to retrieve more.`,
       );
