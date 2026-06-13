@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.13](changelog/0.1.x/0.1.13.md) — 2026-06-12
+
+@cyanheads/mcp-ts-core ^0.9.21 → ^0.10.6: server identity fields, who_query_indicator_data enrichment (totalCount/truncated); MCPB bundle cleaner strips node_modules agent-docs; Dockerfile HEALTHCHECK + version label; skill sync
+
 ## [0.1.12](changelog/0.1.x/0.1.12.md) — 2026-06-04
 
 Fix year=0 fabrication for time-independent GHO rows — DataRow.year is now optional, format() renders — placeholder when absent
