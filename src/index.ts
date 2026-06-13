@@ -16,6 +16,8 @@ import { whoSearchIndicators } from './mcp-server/tools/definitions/who-search-i
 import { initGhoService } from './services/gho/gho-service.js';
 
 await createApp({
+  name: 'who-gho-mcp-server',
+  title: 'who-gho-mcp-server',
   tools: [
     whoListDimensions,
     whoListDimensionValues,
