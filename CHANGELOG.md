@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.14](changelog/0.1.x/0.1.14.md) — 2026-06-20
+
+@cyanheads/mcp-ts-core ^0.10.6 → ^0.10.9: devcheck gains a Dependency Specifiers check rejecting floating ranges, git-repo guards on git-dependent checks, and packaging validation extended to plugin marketplace manifests; framework skills re-synced.
+
 ## [0.1.13](changelog/0.1.x/0.1.13.md) — 2026-06-12
 
 @cyanheads/mcp-ts-core ^0.9.21 → ^0.10.6: server identity fields, who_query_indicator_data enrichment (totalCount/truncated); MCPB bundle cleaner strips node_modules agent-docs; Dockerfile HEALTHCHECK + version label; skill sync

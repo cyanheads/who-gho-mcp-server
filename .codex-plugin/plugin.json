@@ -1,6 +1,6 @@
 {
   "name": "who-gho-mcp-server",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Query WHO Global Health Observatory data — 3,059 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads",
