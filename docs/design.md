@@ -229,7 +229,8 @@ output:
     indicatorCode: string,
     spatialDimType: string,
     spatialDim: string,
-    spatialLabel: string?,   -- ParentLocation for countries
+    parentLocation: string?,      -- ParentLocation: parent WHO region name, absent on region/aggregate rows
+    parentLocationCode: string?,  -- ParentLocationCode: parent WHO region code, chainable to region_codes
     year: number,
     dim1Type: string?,
     dim1: string?,

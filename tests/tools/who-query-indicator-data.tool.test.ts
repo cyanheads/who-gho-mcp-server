@@ -117,7 +117,8 @@ describe('whoQueryIndicatorData', () => {
           indicatorCode: 'WHOSIS_000001',
           spatialDimType: 'COUNTRY',
           spatialDim: 'JPN',
-          spatialLabel: 'Western Pacific',
+          parentLocation: 'Western Pacific',
+          parentLocationCode: 'WPR',
           year: 2021,
           dim1Type: 'SEX',
           dim1: 'SEX_BTSX',
@@ -142,6 +143,91 @@ describe('whoQueryIndicatorData', () => {
     expect(text).toContain('SEX_BTSX');
     expect(text).toContain('AGE_0-4');
     expect(text).toContain('Estimated');
+  });
+
+  it('format labels the parent region instead of slash-joining it onto the location (#15)', () => {
+    const blocks = whoQueryIndicatorData.format!({
+      rows: [
+        {
+          indicatorCode: 'WHOSIS_000001',
+          spatialDimType: 'COUNTRY',
+          spatialDim: 'JPN',
+          parentLocation: 'Western Pacific',
+          parentLocationCode: 'WPR',
+          year: 2021,
+        },
+      ],
+    });
+    const text = (blocks[0] as { type: 'text'; text: string }).text;
+
+    expect(text).toContain('COUNTRY / JPN — parent: Western Pacific (WPR)');
+    // The old rendering read as though Western Pacific sat under Japan.
+    expect(text).not.toContain('JPN / Western Pacific');
+  });
+
+  it('format omits the parent segment on a region row (#15)', () => {
+    const blocks = whoQueryIndicatorData.format!({
+      rows: [
+        {
+          indicatorCode: 'WHOSIS_000001',
+          spatialDimType: 'REGION',
+          spatialDim: 'EUR',
+          year: 2021,
+          numericValue: 79.3,
+        },
+      ],
+    });
+    const text = (blocks[0] as { type: 'text'; text: string }).text;
+
+    expect(text).toContain('REGION / EUR');
+    expect(text).not.toContain('parent:');
+    expect(text).not.toContain('undefined');
+  });
+
+  it('format renders the parent segment per row across a mixed page (#15)', () => {
+    const blocks = whoQueryIndicatorData.format!({
+      rows: [
+        {
+          indicatorCode: 'WHOSIS_000001',
+          spatialDimType: 'COUNTRY',
+          spatialDim: 'JPN',
+          parentLocation: 'Western Pacific',
+          parentLocationCode: 'WPR',
+          year: 2021,
+        },
+        {
+          indicatorCode: 'WHOSIS_000001',
+          spatialDimType: 'WORLDBANKINCOMEGROUP',
+          spatialDim: 'WB_HI',
+          year: 2021,
+        },
+      ],
+    });
+    const lines = (blocks[0] as { type: 'text'; text: string }).text.split('\n');
+
+    expect(lines.filter((line) => line.includes('parent:'))).toHaveLength(1);
+    expect(lines.find((line) => line.includes('WB_HI'))).not.toContain('parent:');
+  });
+
+  it('carries the parent fields onto structuredContent (#15)', async () => {
+    mockService.queryData.mockResolvedValue({
+      rows: [
+        { ...sampleRow, parentLocation: 'Western Pacific', parentLocationCode: 'WPR' },
+        { ...sampleRow, spatialDimType: 'REGION', spatialDim: 'EUR' },
+      ],
+      totalRows: 2,
+      truncated: false,
+    });
+    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+    const input = whoQueryIndicatorData.input.parse({ indicator_code: 'WHOSIS_000001' });
+    const result = await whoQueryIndicatorData.handler(input, ctx);
+
+    // Both consumption paths carry the same data: structuredContent here, content[] above.
+    expect(whoQueryIndicatorData.output.parse(result).rows).toMatchObject([
+      { parentLocation: 'Western Pacific', parentLocationCode: 'WPR' },
+      {},
+    ]);
+    expect(result.rows[1]).not.toHaveProperty('parentLocation');
   });
 
   it('formats sparse rows without optional fields', () => {

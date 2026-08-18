@@ -5,7 +5,12 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { JsonRpcErrorCode, notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import {
+  JsonRpcErrorCode,
+  type McpError,
+  notFound,
+  serviceUnavailable,
+} from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { httpErrorFromResponse, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
@@ -203,6 +208,7 @@ export class GhoService {
           'SpatialDim',
           'TimeDim',
           'ParentLocation',
+          'ParentLocationCode',
           'Dim1Type',
           'Dim1',
           'Dim2Type',
@@ -235,7 +241,18 @@ export class GhoService {
           });
         }
 
-        const data = await this.parseJsonBody<ODataEnvelope<RawDataRow>>(response);
+        // The body is read before the status is classified: every malformed-query class
+        // GHO serves is an HTTP 400 carrying a diagnostic OData envelope, so classifying
+        // on status first would replace what GHO said was wrong with a generic HTTP 400.
+        // A non-2xx body that is not JSON at all has no diagnostic to prefer, so its
+        // status classification is thrown here instead of the parse failure — which,
+        // being ServiceUnavailable, would retry a deterministic 4xx four times.
+        const data = await this.parseJsonBody<ODataEnvelope<RawDataRow>>(response).catch(
+          async (err: unknown) => {
+            if (response.ok) throw err;
+            throw await this.httpError(response, url, ctx);
+          },
+        );
 
         // GHO API returns {"error": {...}} when the OData query is rejected (e.g. malformed filter).
         if ('error' in data) {
@@ -248,6 +265,12 @@ export class GhoService {
             // instead of burning the full ServiceUnavailable retry budget.
             retryable: false,
           });
+        }
+
+        // Reached only by a non-2xx whose body parsed as JSON but carried no OData
+        // error envelope — the one non-2xx shape neither branch above claims.
+        if (!response.ok) {
+          throw await this.httpError(response, url, ctx);
         }
 
         const totalRows = data['@odata.count'] ?? data.value.length;
@@ -265,7 +288,11 @@ export class GhoService {
       ...(r.TimeDim != null && { year: r.TimeDim }),
       ...(r.SpatialDimType && { spatialDimType: r.SpatialDimType }),
       ...(r.SpatialDim && { spatialDim: r.SpatialDim }),
-      ...(r.ParentLocation && { spatialLabel: r.ParentLocation }),
+      // Upstream carries no label for the row's own spatial entity — ParentLocation is
+      // the WHO region the row sits under, null on rows that are themselves a region or
+      // an income group. Resolving SpatialDim to a name needs a who_list_dimension_values join.
+      ...(r.ParentLocation && { parentLocation: r.ParentLocation }),
+      ...(r.ParentLocationCode && { parentLocationCode: r.ParentLocationCode }),
       ...(r.Dim1Type && { dim1Type: r.Dim1Type }),
       ...(r.Dim1 && { dim1: r.Dim1 }),
       ...(r.Dim2Type && { dim2Type: r.Dim2Type }),
@@ -304,24 +331,34 @@ export class GhoService {
     }
   }
 
-  /** Internal: fetch JSON from a URL and parse the OData envelope. Throws ServiceUnavailable on non-2xx. */
+  /** Internal: fetch JSON from a URL and parse the OData envelope. Throws on non-2xx. */
   private async getJson<T>(url: string, ctx: Context): Promise<T> {
     const response = await this.fetchRaw(url, ctx);
     if (!response.ok) {
-      ctx.log.warning('GHO API returned a non-2xx status', { url, status: response.status });
-      throw await httpErrorFromResponse(response, {
-        service: 'GHO API',
-        captureBody: false,
-        // The default mapping sends 500/501 to InternalError, which is not transient —
-        // adopting it verbatim would silently stop retrying those. Keep the whole 5xx
-        // range retryable and let 4xx fall through to the fail-fast default mapping.
-        codeOverride: (status) => (status >= 500 ? JsonRpcErrorCode.ServiceUnavailable : undefined),
-        // httpErrorFromResponse seeds data.url from response.url; extraData spreads last,
-        // so this suppresses it rather than relocating the leak from the message.
-        data: { url: undefined },
-      });
+      throw await this.httpError(response, url, ctx);
     }
     return this.parseJsonBody<T>(response);
+  }
+
+  /**
+   * Internal: the single classification point for a non-2xx upstream response, shared
+   * by every request path so retryability is decided in one place.
+   */
+  private httpError(response: Response, url: string, ctx: Context): Promise<McpError> {
+    ctx.log.warning('GHO API returned a non-2xx status', { url, status: response.status });
+    return httpErrorFromResponse(response, {
+      service: 'GHO API',
+      // The body is already consumed on the queryData path, and capturing it would put
+      // upstream text on a client-facing surface either way.
+      captureBody: false,
+      // The default mapping sends 500/501 to InternalError, which is not transient —
+      // adopting it verbatim would silently stop retrying those. Keep the whole 5xx
+      // range retryable and let 4xx fall through to the fail-fast default mapping.
+      codeOverride: (status) => (status >= 500 ? JsonRpcErrorCode.ServiceUnavailable : undefined),
+      // httpErrorFromResponse seeds data.url from response.url; extraData spreads last,
+      // so this suppresses it rather than relocating the leak from the message.
+      data: { url: undefined },
+    });
   }
 
   /**

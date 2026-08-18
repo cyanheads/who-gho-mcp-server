@@ -49,8 +49,8 @@ export interface RawDataRow {
   IndicatorCode: string;
   Low?: number | null;
   NumericValue?: number | null;
-  ParentLocation?: string;
-  ParentLocationCode?: string;
+  ParentLocation?: string | null;
+  ParentLocationCode?: string | null;
   SpatialDim?: string;
   SpatialDimType?: string;
   TimeDim?: number;
@@ -103,9 +103,12 @@ export interface DataRow {
   indicatorCode: string;
   low?: number;
   numericValue?: number;
+  /** Name of the parent WHO region; absent when the row's own spatial entity is a region or aggregate. */
+  parentLocation?: string;
+  /** Code of the parent WHO region; absent alongside `parentLocation`. */
+  parentLocationCode?: string;
   spatialDim?: string;
   spatialDimType?: string;
-  spatialLabel?: string;
   year?: number;
 }
 

@@ -149,10 +149,21 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
               .string()
               .optional()
               .describe('Spatial dimension value, e.g. "JPN", "AFR", "WB_HI".'),
-            spatialLabel: z
+            parentLocation: z
               .string()
               .optional()
-              .describe('Human-readable spatial label, e.g. WHO region name for a country row.'),
+              .describe(
+                'Name of the WHO region this row sits under, e.g. "Western Pacific" for a JPN row. ' +
+                  'Not a label for spatialDim itself — the upstream row carries no name for its own ' +
+                  'spatial entity. Absent when spatialDim is already a region or income group.',
+              ),
+            parentLocationCode: z
+              .string()
+              .optional()
+              .describe(
+                'Code of the WHO region this row sits under, e.g. "WPR". Pass to region_codes to ' +
+                  "query that region's own aggregate rows. Absent alongside parentLocation.",
+              ),
             year: z
               .number()
               .optional()
@@ -450,9 +461,14 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   format: (result) => {
     const lines: string[] = [`**Rows returned: ${result.rows.length}**`, ''];
     for (const row of result.rows) {
-      const spatial = [row.spatialDimType, row.spatialDim, row.spatialLabel]
-        .filter(Boolean)
-        .join(' / ');
+      const spatial = [row.spatialDimType, row.spatialDim].filter(Boolean).join(' / ');
+      // The parent region gets its own labelled segment. Slash-joined onto the spatial
+      // group it read as a third coordinate of the row's own location instead.
+      const parentParts = [
+        row.parentLocation,
+        row.parentLocationCode && `(${row.parentLocationCode})`,
+      ].filter(Boolean);
+      const parent = parentParts.length > 0 ? ` — parent: ${parentParts.join(' ')}` : '';
       const dim1 = row.dim1Type ? ` | ${row.dim1Type}: ${row.dim1}` : '';
       const dim2 = row.dim2Type ? ` | ${row.dim2Type}: ${row.dim2}` : '';
       const displayPart = row.displayValue ? ` display=${row.displayValue}` : '';
@@ -461,7 +477,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       const comments = row.comments ? ` — ${row.comments}` : '';
       const yearPart = row.year != null ? `**${row.year}**` : '**—**';
       lines.push(
-        `- [${row.indicatorCode}] ${yearPart} | ${spatial}${dim1}${dim2}${displayPart}${numericPart}${uncertainty}${comments}`,
+        `- [${row.indicatorCode}] ${yearPart} | ${spatial}${parent}${dim1}${dim2}${displayPart}${numericPart}${uncertainty}${comments}`,
       );
     }
     return [{ type: 'text', text: lines.join('\n') }];

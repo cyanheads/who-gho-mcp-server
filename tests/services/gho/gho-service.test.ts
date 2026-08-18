@@ -33,6 +33,23 @@ const dataRow = {
   Value: '84.5',
 };
 
+const countryDataRow = {
+  ...dataRow,
+  ParentLocation: 'Western Pacific',
+  ParentLocationCode: 'WPR',
+};
+
+const regionDataRow = {
+  IndicatorCode: 'WHOSIS_000001',
+  SpatialDimType: 'REGION',
+  SpatialDim: 'EUR',
+  TimeDim: 2021,
+  NumericValue: 79.3,
+  Value: '79.3',
+  ParentLocation: null,
+  ParentLocationCode: null,
+};
+
 const countryValue = {
   Code: 'JPN',
   Title: 'Japan',
@@ -81,6 +98,21 @@ const odataRejection = () =>
     { status: 400 },
   );
 
+/**
+ * The diagnostic the live API returns for a malformed `$filter` (verified HTTP 400).
+ * Its message text is the error quality an early `!response.ok` check would discard.
+ */
+const odataFilterRejection = () =>
+  Response.json(
+    {
+      error: {
+        code: '',
+        message: "There is an unterminated literal at position 20 in 'SpatialDim eq 'J'PN''.",
+      },
+    },
+    { status: 400 },
+  );
+
 describe('GhoService — request construction', () => {
   let http: FetchMockHarness;
 
@@ -108,6 +140,87 @@ describe('GhoService — request construction', () => {
     expect(params.get('$top')).toBe('200');
     expect(params.get('$count')).toBe('true');
     expect(params.get('$select')).toContain('NumericValue');
+  });
+
+  it('queryData selects both parent-location fields (#15)', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => Response.json({ '@odata.count': 1, value: [countryDataRow] }),
+    });
+
+    await newService().queryData(baseQueryParams, createMockContext());
+
+    const select = paramsOf(http).get('$select')!.split(',');
+    // $select is a whitelist: a field missing here never reaches normalizeRow at all.
+    expect(select).toContain('ParentLocation');
+    expect(select).toContain('ParentLocationCode');
+  });
+
+  it('queryData names the parent region fields for what they hold (#15)', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => Response.json({ '@odata.count': 1, value: [countryDataRow] }),
+    });
+
+    const result = await newService().queryData(baseQueryParams, createMockContext());
+
+    expect(result.rows[0]).toMatchObject({
+      spatialDim: 'JPN',
+      parentLocation: 'Western Pacific',
+      parentLocationCode: 'WPR',
+    });
+    // spatialLabel read as a name for the row's own entity while holding its parent's.
+    expect(result.rows[0]).not.toHaveProperty('spatialLabel');
+  });
+
+  it('queryData omits both parent fields on a region row rather than emitting nulls (#15)', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => Response.json({ '@odata.count': 1, value: [regionDataRow] }),
+    });
+
+    const result = await newService().queryData(baseQueryParams, createMockContext());
+
+    // Upstream serves null for both on a row whose spatial dimension is itself a region.
+    expect(result.rows[0]).toMatchObject({ spatialDim: 'EUR', spatialDimType: 'REGION' });
+    expect(result.rows[0]).not.toHaveProperty('parentLocation');
+    expect(result.rows[0]).not.toHaveProperty('parentLocationCode');
+  });
+
+  it('queryData omits both parent fields on an income-group row (#15)', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () =>
+        Response.json({
+          '@odata.count': 1,
+          value: [
+            {
+              ...regionDataRow,
+              SpatialDimType: 'WORLDBANKINCOMEGROUP',
+              SpatialDim: 'WB_HI',
+            },
+          ],
+        }),
+    });
+
+    const result = await newService().queryData(baseQueryParams, createMockContext());
+
+    expect(result.rows[0]).toMatchObject({ spatialDim: 'WB_HI' });
+    expect(result.rows[0]).not.toHaveProperty('parentLocation');
+    expect(result.rows[0]).not.toHaveProperty('parentLocationCode');
+  });
+
+  it('queryData carries the parent fields per row across a mixed page (#15)', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => Response.json({ '@odata.count': 2, value: [countryDataRow, regionDataRow] }),
+    });
+
+    const result = await newService().queryData(baseQueryParams, createMockContext());
+
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]?.parentLocationCode).toBe('WPR');
+    expect(result.rows[1]?.parentLocationCode).toBeUndefined();
   });
 
   it('queryData escapes an apostrophe in a country code by doubling it (closed #3 regression)', async () => {
@@ -395,6 +508,74 @@ describe('GhoService — retry classification', () => {
     expect(error?.data?.reason).toBe('indicator_not_found');
     expect(http.calls).toHaveLength(1);
   });
+
+  /**
+   * queryData reads the body before classifying on status, so none of the getJson
+   * request-count assertions above pin any of this — these drive queryData itself.
+   */
+  const queryStatus = (status: number, body = 'upstream trouble') => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => new Response(body, { status }),
+    });
+    return settle(newService().queryData(baseQueryParams, createMockContext()));
+  };
+
+  it.each([500, 501, 502, 503])(
+    'retries HTTP %i from queryData four times and classifies it by status',
+    async (status) => {
+      const error = await queryStatus(status);
+
+      expect(http.calls).toHaveLength(4);
+      expect(error?.message).toContain(`HTTP ${status}`);
+    },
+  );
+
+  it.each([429, 408])(
+    'retries HTTP %i from queryData four times — throttled or timed out is not deterministic',
+    async (status) => {
+      const error = await queryStatus(status, 'slow down');
+
+      expect(http.calls).toHaveLength(4);
+      expect(error?.message).toContain(`HTTP ${status}`);
+    },
+  );
+
+  it('fails a non-JSON deterministic 400 from queryData on the first attempt', async () => {
+    const error = await queryStatus(400, 'bad request');
+
+    // The parse failure used to surface as ServiceUnavailable, which is transient —
+    // a deterministic 4xx burned the whole retry budget before failing.
+    expect(http.calls).toHaveLength(1);
+    expect(error?.message).toContain('HTTP 400');
+  });
+
+  it('classifies a non-2xx JSON body carrying no error key', async () => {
+    const error = await queryStatus(400, JSON.stringify({ notAnEnvelope: true }));
+
+    // Valid JSON with neither `error` nor `value` reached data.value.map() and threw
+    // a TypeError, which withRetry treats as transient because it is not an McpError.
+    expect(http.calls).toHaveLength(1);
+    expect(error?.message).toContain('HTTP 400');
+  });
+
+  it('preserves the upstream OData diagnostic for a malformed $filter', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: odataFilterRejection,
+    });
+
+    const error = await settle(
+      newService().queryData({ ...baseQueryParams, countryCodes: ["J'PN"] }, createMockContext()),
+    );
+
+    // A status check placed before the body is read would replace this with a
+    // generic HTTP 400 and lose what GHO actually said was wrong.
+    expect(error?.message).toContain('There is an unterminated literal at position 20');
+    expect(error?.data?.reason).toBe('invalid_query');
+    expect(error?.data?.retryable).toBe(false);
+    expect(http.calls).toHaveLength(1);
+  });
 });
 
 describe('GhoService — client-facing errors carry no encoded query string', () => {
@@ -435,6 +616,20 @@ describe('GhoService — client-facing errors carry no encoded query string', ()
 
     expect(error).toBeDefined();
     expect(error?.data?.url).toBeUndefined();
+    expect(error?.message ?? '').not.toContain(BASE);
+  });
+
+  it('omits the URL from a non-2xx queryData error', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => new Response('bad request', { status: 400 }),
+    });
+
+    const error = await settle(newService().queryData(baseQueryParams, createMockContext()));
+
+    expect(error).toBeDefined();
+    expect(error?.data?.url).toBeUndefined();
+    expect(JSON.stringify(error?.data ?? {})).not.toContain('%24');
     expect(error?.message ?? '').not.toContain(BASE);
   });
 
