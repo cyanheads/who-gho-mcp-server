@@ -4,7 +4,7 @@
  * @module tests/tools/who-list-dimension-values-extended.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoListDimensionValues } from '@/mcp-server/tools/definitions/who-list-dimension-values.tool.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
@@ -14,6 +14,9 @@ const mockService = {
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);
+
+/** The service returns one page plus the unpaged total. */
+const page = <T>(values: T[], total = values.length) => ({ values, total });
 
 describe('whoListDimensionValues — input validation', () => {
   it('rejects empty dimension string (min 1)', () => {
@@ -26,6 +29,47 @@ describe('whoListDimensionValues — input validation', () => {
 
   it('accepts a valid dimension code', () => {
     expect(() => whoListDimensionValues.input.parse({ dimension: 'COUNTRY' })).not.toThrow();
+  });
+
+  it('applies limit and offset defaults', () => {
+    const input = whoListDimensionValues.input.parse({ dimension: 'COUNTRY' });
+    expect(input.limit).toBe(100);
+    expect(input.offset).toBe(0);
+    expect(input.parent_code).toBeUndefined();
+  });
+
+  it('rejects a negative offset', () => {
+    expect(() =>
+      whoListDimensionValues.input.parse({ dimension: 'COUNTRY', offset: -1 }),
+    ).toThrow();
+  });
+
+  it('accepts offset 0 as the lower bound', () => {
+    expect(() =>
+      whoListDimensionValues.input.parse({ dimension: 'COUNTRY', offset: 0 }),
+    ).not.toThrow();
+  });
+
+  it('rejects a limit outside 1..500', () => {
+    expect(() => whoListDimensionValues.input.parse({ dimension: 'COUNTRY', limit: 0 })).toThrow();
+    expect(() =>
+      whoListDimensionValues.input.parse({ dimension: 'COUNTRY', limit: 501 }),
+    ).toThrow();
+  });
+
+  it('accepts the limit boundaries', () => {
+    expect(() =>
+      whoListDimensionValues.input.parse({ dimension: 'COUNTRY', limit: 1 }),
+    ).not.toThrow();
+    expect(() =>
+      whoListDimensionValues.input.parse({ dimension: 'COUNTRY', limit: 500 }),
+    ).not.toThrow();
+  });
+
+  it('rejects an empty parent_code', () => {
+    expect(() =>
+      whoListDimensionValues.input.parse({ dimension: 'COUNTRY', parent_code: '' }),
+    ).toThrow();
   });
 });
 
@@ -42,11 +86,13 @@ describe('whoListDimensionValues — edge cases', () => {
   });
 
   it('returns all values including sparse ones with no parent fields', async () => {
-    mockService.listDimensionValues.mockResolvedValue([
-      { code: 'SEX_BTSX', label: 'Both sexes' },
-      { code: 'SEX_FMLE', label: 'Female' },
-      { code: 'SEX_MLE', label: 'Male' },
-    ]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([
+        { code: 'SEX_BTSX', label: 'Both sexes' },
+        { code: 'SEX_FMLE', label: 'Female' },
+        { code: 'SEX_MLE', label: 'Male' },
+      ]),
+    );
     const ctx = createMockContext({ errors: whoListDimensionValues.errors });
     const input = whoListDimensionValues.input.parse({ dimension: 'SEX' });
     const result = await whoListDimensionValues.handler(input, ctx);
@@ -57,11 +103,48 @@ describe('whoListDimensionValues — edge cases', () => {
   });
 
   it('echoes the dimension code into the result', async () => {
-    mockService.listDimensionValues.mockResolvedValue([{ code: 'WB_HI', label: 'High income' }]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([{ code: 'WB_HI', label: 'High income' }]),
+    );
     const ctx = createMockContext({ errors: whoListDimensionValues.errors });
     const input = whoListDimensionValues.input.parse({ dimension: 'WORLDBANKINCOMEGROUP' });
     const result = await whoListDimensionValues.handler(input, ctx);
     expect(result.dimension).toBe('WORLDBANKINCOMEGROUP');
+  });
+
+  it('walks a large dimension page by page to the end', async () => {
+    mockService.listDimensionValues
+      .mockResolvedValueOnce(
+        page(
+          [
+            { code: 'A', label: 'A' },
+            { code: 'B', label: 'B' },
+          ],
+          3,
+        ),
+      )
+      .mockResolvedValueOnce(page([{ code: 'C', label: 'C' }], 3));
+
+    const ctxA = createMockContext({ errors: whoListDimensionValues.errors });
+    await whoListDimensionValues.handler(
+      whoListDimensionValues.input.parse({ dimension: 'GHO', limit: 2 }),
+      ctxA,
+    );
+    expect(getEnrichment(ctxA).nextOffset).toBe(2);
+
+    const ctxB = createMockContext({ errors: whoListDimensionValues.errors });
+    await whoListDimensionValues.handler(
+      whoListDimensionValues.input.parse({
+        dimension: 'GHO',
+        limit: 2,
+        offset: getEnrichment(ctxA).nextOffset as number,
+      }),
+      ctxB,
+    );
+    const last = getEnrichment(ctxB);
+    expect(last.hasMore).toBe(false);
+    expect(last.nextOffset).toBeUndefined();
+    expect(last.pageInfo).toBe('offset 2, showing 1 of 3');
   });
 
   it('format includes dimension name in header', () => {
@@ -83,7 +166,9 @@ describe('whoListDimensionValues — security', () => {
 
   it('does not echo injection attempt from dimension code into output fields', async () => {
     const injectionDimension = "'; DROP TABLE dimensions; --";
-    mockService.listDimensionValues.mockResolvedValue([{ code: 'CODE_1', label: 'Normal Value' }]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([{ code: 'CODE_1', label: 'Normal Value' }]),
+    );
     const ctx = createMockContext({ errors: whoListDimensionValues.errors });
     const input = whoListDimensionValues.input.parse({ dimension: injectionDimension });
     const result = await whoListDimensionValues.handler(input, ctx);
@@ -94,7 +179,7 @@ describe('whoListDimensionValues — security', () => {
   });
 
   it('does not leak env vars in dimension_not_found error', async () => {
-    mockService.listDimensionValues.mockResolvedValue([]);
+    mockService.listDimensionValues.mockResolvedValue(page([]));
     const ctx = createMockContext({ errors: whoListDimensionValues.errors });
     const input = whoListDimensionValues.input.parse({ dimension: 'NOTEXIST' });
     let caughtError: unknown;
@@ -109,9 +194,9 @@ describe('whoListDimensionValues — security', () => {
   });
 
   it('handles unicode dimension code without throwing', async () => {
-    mockService.listDimensionValues.mockResolvedValue([
-      { code: 'VAL_1', label: 'Région africaine' },
-    ]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([{ code: 'VAL_1', label: 'Région africaine' }]),
+    );
     const ctx = createMockContext({ errors: whoListDimensionValues.errors });
     const input = whoListDimensionValues.input.parse({ dimension: 'RÉGION' });
     const result = await whoListDimensionValues.handler(input, ctx);

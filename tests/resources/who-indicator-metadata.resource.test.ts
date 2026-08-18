@@ -57,6 +57,41 @@ describe('whoIndicatorMetadataResource', () => {
     );
   });
 
+  it('returns a payload for a code whose name resolves but whose dimension table is empty', async () => {
+    // The resource shares getIndicatorDimensions with the tool, so it inherited the same
+    // false negative: an empty dimension table read as "the indicator may not exist".
+    mockService.getIndicatorDimensions.mockResolvedValue(
+      new Map([['PHE_HHAIR_PROP_POP_CLEAN_FUELS', []]]),
+    );
+    mockService.listIndicators.mockResolvedValue({
+      indicators: [
+        {
+          indicatorCode: 'PHE_HHAIR_PROP_POP_CLEAN_FUELS',
+          indicatorName: 'Proportion of population with primary reliance on clean fuels',
+        },
+      ],
+      total: 1,
+    });
+    const ctx = createMockContext();
+    const params = whoIndicatorMetadataResource.params!.parse({
+      indicatorCode: 'PHE_HHAIR_PROP_POP_CLEAN_FUELS',
+    });
+    const result = await whoIndicatorMetadataResource.handler(params, ctx);
+    expect(result.dimensions).toEqual([]);
+    expect(result.indicatorName).toContain('clean fuels');
+    expect(result.dimensionsNote).toMatch(/who_query_indicator_data/);
+  });
+
+  it('still throws when neither a name nor dimension rows resolve', async () => {
+    mockService.getIndicatorDimensions.mockResolvedValue(new Map([['NOTEXIST', []]]));
+    mockService.listIndicators.mockResolvedValue({ indicators: [], total: 0 });
+    const ctx = createMockContext();
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'NOTEXIST' });
+    await expect(whoIndicatorMetadataResource.handler(params, ctx)).rejects.toThrow(
+      /not exist|not found/i,
+    );
+  });
+
   it('uses indicator code as name when indicator catalog search finds no name', async () => {
     mockService.getIndicatorDimensions.mockResolvedValue(
       new Map([['CODE_X', [{ dimension: 'COUNTRY', dimensionName: 'Country' }]]]),

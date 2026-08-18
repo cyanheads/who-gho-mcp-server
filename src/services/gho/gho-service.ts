@@ -85,19 +85,41 @@ export class GhoService {
     );
   }
 
-  /** Fetch valid values for a dimension type. Returns empty array if unknown code. */
-  listDimensionValues(dimensionCode: string, ctx: Context): Promise<DimensionValue[]> {
+  /**
+   * Fetch one page of valid values for a dimension type, optionally narrowed to a
+   * parent code. An empty page is not evidence the dimension is unknown — the upstream
+   * answers HTTP 200 with `value: []` for both an unknown dimension and a filter that
+   * matched nothing, so callers separate the two from `total` and the filter they sent.
+   */
+  listDimensionValues(
+    params: { dimensionCode: string; limit: number; offset: number; parentCode?: string },
+    ctx: Context,
+  ): Promise<{ values: DimensionValue[]; total: number }> {
     return withRetry(
       async () => {
-        const url = `${this.baseUrl}/DIMENSION/${encodeURIComponent(dimensionCode)}/DimensionValues`;
+        const qs = new URLSearchParams({
+          $top: String(params.limit),
+          $skip: String(params.offset),
+          $count: 'true',
+          // Offset paging is only sound over a guaranteed order. Code is unique and
+          // non-null across every GHO dimension, so it is a total order on its own.
+          $orderby: 'Code',
+        });
+        if (params.parentCode) {
+          qs.set('$filter', `ParentCode eq '${this.escapeODataString(params.parentCode)}'`);
+        }
+        const url = `${this.baseUrl}/DIMENSION/${encodeURIComponent(params.dimensionCode)}/DimensionValues?${qs}`;
         const data = await this.getJson<ODataEnvelope<RawDimensionValue>>(url, ctx);
-        return data.value.map((v) => ({
-          code: v.Code,
-          label: v.Title,
-          ...(v.ParentCode && { parentCode: v.ParentCode }),
-          ...(v.ParentTitle && { parentLabel: v.ParentTitle }),
-          ...(v.ParentDimension && { parentDimension: v.ParentDimension }),
-        }));
+        return {
+          values: data.value.map((v) => ({
+            code: v.Code,
+            label: v.Title,
+            ...(v.ParentCode && { parentCode: v.ParentCode }),
+            ...(v.ParentTitle && { parentLabel: v.ParentTitle }),
+            ...(v.ParentDimension && { parentDimension: v.ParentDimension }),
+          })),
+          total: data['@odata.count'] ?? data.value.length,
+        };
       },
       { context: ctx, operation: 'GhoService.listDimensionValues', signal: ctx.signal },
     );
@@ -105,7 +127,11 @@ export class GhoService {
 
   /**
    * Fetch dimension metadata for multiple indicator codes in parallel.
-   * Returns a map of code → dimensions. Codes with empty metadata are absent from the map.
+   * Returns a map of code → dimensions carrying an entry for every requested code; an
+   * empty array means the upstream `IndicatorDimension` table holds no rows for it.
+   * Roughly 1,300 of the 3,089 catalog indicators are in that state and most of them
+   * still carry data, so an empty array says nothing about whether the code exists —
+   * callers resolve existence from the `Indicator` catalog instead.
    */
   async getIndicatorDimensions(
     indicatorCodes: string[],
@@ -133,11 +159,7 @@ export class GhoService {
         return [code, dims] as const;
       }),
     );
-    const map = new Map<string, IndicatorDimensionEntry[]>();
-    for (const [code, dims] of results) {
-      if (dims.length > 0) map.set(code, dims);
-    }
-    return map;
+    return new Map<string, IndicatorDimensionEntry[]>(results);
   }
 
   /** Query data rows for an indicator with optional OData filters. */

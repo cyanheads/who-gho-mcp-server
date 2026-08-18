@@ -6,7 +6,10 @@
 
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { whoDimensionValuesResource } from '@/mcp-server/resources/definitions/who-dimension-values.resource.js';
+import {
+  whoDimensionValuesPageResource,
+  whoDimensionValuesResource,
+} from '@/mcp-server/resources/definitions/who-dimension-values.resource.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
 
 const mockService = {
@@ -14,6 +17,9 @@ const mockService = {
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);
+
+/** The service returns one page plus the unpaged total. */
+const page = <T>(values: T[], total = values.length) => ({ values, total });
 
 describe('whoDimensionValuesResource — edge cases', () => {
   beforeEach(() => {
@@ -30,7 +36,9 @@ describe('whoDimensionValuesResource — edge cases', () => {
   });
 
   it('echoes dimensionCode into result.dimension field', async () => {
-    mockService.listDimensionValues.mockResolvedValue([{ code: 'SEX_BTSX', label: 'Both sexes' }]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([{ code: 'SEX_BTSX', label: 'Both sexes' }]),
+    );
     const ctx = createMockContext();
     const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'SEX' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
@@ -38,15 +46,17 @@ describe('whoDimensionValuesResource — edge cases', () => {
   });
 
   it('returns all parent fields when upstream includes them', async () => {
-    mockService.listDimensionValues.mockResolvedValue([
-      {
-        code: 'JPN',
-        label: 'Japan',
-        parentCode: 'WPR',
-        parentLabel: 'Western Pacific',
-        parentDimension: 'REGION',
-      },
-    ]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([
+        {
+          code: 'JPN',
+          label: 'Japan',
+          parentCode: 'WPR',
+          parentLabel: 'Western Pacific',
+          parentDimension: 'REGION',
+        },
+      ]),
+    );
     const ctx = createMockContext();
     const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'COUNTRY' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
@@ -60,13 +70,45 @@ describe('whoDimensionValuesResource — edge cases', () => {
   });
 });
 
+describe('whoDimensionValuesPageResource — input validation', () => {
+  it('rejects a non-numeric limit', () => {
+    expect(() =>
+      whoDimensionValuesPageResource.params!.parse({
+        dimensionCode: 'COUNTRY',
+        limit: 'many',
+        offset: '0',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a negative offset', () => {
+    expect(() =>
+      whoDimensionValuesPageResource.params!.parse({
+        dimensionCode: 'COUNTRY',
+        limit: '10',
+        offset: '-1',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a limit above the ceiling', () => {
+    expect(() =>
+      whoDimensionValuesPageResource.params!.parse({
+        dimensionCode: 'COUNTRY',
+        limit: '501',
+        offset: '0',
+      }),
+    ).toThrow();
+  });
+});
+
 describe('whoDimensionValuesResource — security', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('does not leak env vars or secrets in not-found error', async () => {
-    mockService.listDimensionValues.mockResolvedValue([]);
+    mockService.listDimensionValues.mockResolvedValue(page([]));
     const ctx = createMockContext();
     const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'NOTEXIST' });
     let caughtError: unknown;
@@ -82,7 +124,9 @@ describe('whoDimensionValuesResource — security', () => {
 
   it('handles injection attempt in dimensionCode without crashing', async () => {
     const injectionCode = "'; DROP TABLE dim; --";
-    mockService.listDimensionValues.mockResolvedValue([{ code: 'SAFE', label: 'Safe Value' }]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([{ code: 'SAFE', label: 'Safe Value' }]),
+    );
     const ctx = createMockContext();
     const params = whoDimensionValuesResource.params!.parse({ dimensionCode: injectionCode });
     const result = await whoDimensionValuesResource.handler(params, ctx);
@@ -92,7 +136,9 @@ describe('whoDimensionValuesResource — security', () => {
   });
 
   it('handles unicode dimensionCode without throwing', async () => {
-    mockService.listDimensionValues.mockResolvedValue([{ code: 'AFR', label: 'Région africaine' }]);
+    mockService.listDimensionValues.mockResolvedValue(
+      page([{ code: 'AFR', label: 'Région africaine' }]),
+    );
     const ctx = createMockContext();
     const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'RÉGION' });
     const result = await whoDimensionValuesResource.handler(params, ctx);

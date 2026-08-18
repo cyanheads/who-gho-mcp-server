@@ -33,6 +33,14 @@ const dataRow = {
   Value: '84.5',
 };
 
+const countryValue = {
+  Code: 'JPN',
+  Title: 'Japan',
+  ParentCode: 'WPR',
+  ParentTitle: 'Western Pacific',
+  ParentDimension: 'REGION',
+};
+
 const DESC_ORDER = 'TimeDim desc,SpatialDim,Dim1,Id';
 const ASC_ORDER = 'TimeDim asc,SpatialDim,Dim1,Id';
 
@@ -180,6 +188,123 @@ describe('GhoService — request construction', () => {
     expect(params.get('$skip')).toBe('2');
     expect(params.get('$orderby')).toBe('IndicatorCode');
     expect(params.get('$filter')).toBe("contains(IndicatorName,'mortality')");
+  });
+
+  it('listDimensionValues sends $top, $skip, $count, and a total $orderby=Code', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/DIMENSION/COUNTRY/DimensionValues`),
+      respond: () => Response.json({ '@odata.count': 234, value: [countryValue] }),
+    });
+
+    const result = await newService().listDimensionValues(
+      { dimensionCode: 'COUNTRY', limit: 100, offset: 20 },
+      createMockContext(),
+    );
+
+    expect(result.values).toHaveLength(1);
+    expect(result.values[0]).toMatchObject({ code: 'JPN', label: 'Japan', parentCode: 'WPR' });
+    expect(result.total).toBe(234);
+
+    const params = paramsOf(http);
+    expect(params.get('$top')).toBe('100');
+    expect(params.get('$skip')).toBe('20');
+    expect(params.get('$count')).toBe('true');
+    // Code is unique and non-null across every GHO dimension, so it is a total
+    // order — without it $skip pages over an order the upstream never promised.
+    expect(params.get('$orderby')).toBe('Code');
+    expect(params.get('$filter')).toBeNull();
+  });
+
+  it('listDimensionValues sends a ParentCode filter with the apostrophe doubled', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/DIMENSION/COUNTRY/DimensionValues`),
+      respond: () => Response.json({ '@odata.count': 0, value: [] }),
+    });
+
+    const result = await newService().listDimensionValues(
+      { dimensionCode: 'COUNTRY', limit: 100, offset: 0, parentCode: "EU'R" },
+      createMockContext(),
+    );
+
+    expect(result).toEqual({ values: [], total: 0 });
+    expect(paramsOf(http).get('$filter')).toBe("ParentCode eq 'EU''R'");
+  });
+
+  it('listDimensionValues falls back to the page length when the upstream omits @odata.count', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/DIMENSION/SEX/DimensionValues`),
+      respond: () => Response.json({ value: [countryValue, countryValue] }),
+    });
+
+    const result = await newService().listDimensionValues(
+      { dimensionCode: 'SEX', limit: 100, offset: 0 },
+      createMockContext(),
+    );
+
+    expect(result.total).toBe(2);
+  });
+
+  it('getIndicatorDimensions fans out one filtered request per code', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/IndicatorDimension?`),
+      respond: () =>
+        Response.json({
+          value: [
+            { Dimension: 'COUNTRY', DimensionName: 'Country', IndicatorCode: 'WHOSIS_000001' },
+            { Dimension: 'PUBLISHSTATE', DimensionName: 'Publish State', IndicatorCode: 'X' },
+          ],
+        }),
+    });
+
+    const map = await newService().getIndicatorDimensions(
+      ['WHOSIS_000001', "ODD'CODE"],
+      createMockContext(),
+    );
+
+    expect(http.calls).toHaveLength(2);
+    expect(paramsOf(http, 0).get('$filter')).toBe("IndicatorCode eq 'WHOSIS_000001'");
+    // Apostrophes are doubled before reaching the upstream filter.
+    expect(paramsOf(http, 1).get('$filter')).toBe("IndicatorCode eq 'ODD''CODE'");
+    // PUBLISHSTATE is an internal publishing state, never a user-filterable dimension.
+    expect(map.get('WHOSIS_000001')).toEqual([{ dimension: 'COUNTRY', dimensionName: 'Country' }]);
+  });
+
+  it('getIndicatorDimensions maps a code with only internal rows to an empty array, not absence', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/IndicatorDimension?`),
+      respond: () =>
+        Response.json({
+          value: [
+            {
+              Dimension: 'PUBLISHSTATE',
+              DimensionName: 'Publish State',
+              IndicatorCode: 'CHILDMORT10TO19',
+            },
+          ],
+        }),
+    });
+
+    const map = await newService().getIndicatorDimensions(['CHILDMORT10TO19'], createMockContext());
+
+    // Absence from the map used to mean "no dimension rows", which callers read as
+    // "the indicator does not exist". Every requested code now gets an entry, so the
+    // map answers only the dimension question and existence is resolved elsewhere.
+    expect(map.has('CHILDMORT10TO19')).toBe(true);
+    expect(map.get('CHILDMORT10TO19')).toEqual([]);
+  });
+
+  it('getIndicatorDimensions maps a code with no upstream rows at all to an empty array', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/IndicatorDimension?`),
+      respond: () => Response.json({ value: [] }),
+    });
+
+    const map = await newService().getIndicatorDimensions(
+      ['PHE_HHAIR_PROP_POP_CLEAN_FUELS'],
+      createMockContext(),
+    );
+
+    expect(map.get('PHE_HHAIR_PROP_POP_CLEAN_FUELS')).toEqual([]);
   });
 });
 

@@ -7,6 +7,16 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
 
+/**
+ * Emitted for a code that resolves in the `Indicator` catalog but has no rows in the
+ * `IndicatorDimension` table — the state ~1,300 of the 3,089 catalog indicators are in,
+ * most of which still return data. Names the fallback route to the same information.
+ */
+const DIMENSIONS_UNAVAILABLE =
+  'The GHO dimension table lists no dimensions for this indicator. The code is valid and may ' +
+  'still return data — call who_query_indicator_data for a sample row and read dim1Type and ' +
+  'dim2Type to see which dimensions it actually uses.';
+
 export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   title: 'Get WHO GHO Indicator Metadata',
   description:
@@ -14,7 +24,9 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     'it supports (e.g. COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, AGEGROUP). ' +
     'Call this before querying data with who_query_indicator_data to confirm which filter dimensions ' +
     'are valid for a given indicator. Accepts up to 10 codes per call. ' +
-    'Codes with no metadata are reported in the notFound array rather than causing an error.',
+    'Many valid indicators have no dimension listing upstream — those return an empty dimensions ' +
+    'array with a dimensionsNote, not a not-found. Only codes absent from the catalog are ' +
+    'reported in the notFound array, and that is reported rather than raised as an error.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_codes: z
@@ -48,16 +60,25 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
                   .describe('A dimension entry supported by this indicator.'),
               )
               .describe(
-                'Dimensions this indicator supports for filtering in who_query_indicator_data.',
+                'Dimensions this indicator supports for filtering in who_query_indicator_data. ' +
+                  'Empty when the GHO dimension table lists none for this code — see dimensionsNote.',
+              ),
+            dimensionsNote: z
+              .string()
+              .optional()
+              .describe(
+                'Present only when dimensions is empty: explains that the listing is missing ' +
+                  'upstream rather than the indicator being absent, and how to recover the ' +
+                  'dimensions from a sample data row.',
               ),
           })
           .describe('Metadata for one indicator.'),
       )
-      .describe('Metadata for each code that returned results.'),
+      .describe('Metadata for each code that resolved to a catalog entry.'),
     notFound: z
       .array(z.string())
       .describe(
-        'Indicator codes that returned no metadata — they may not exist in the GHO catalog.',
+        'Indicator codes that resolved to neither a catalog name nor any dimension rows — they do not exist in the GHO catalog.',
       ),
   }),
 
@@ -65,7 +86,7 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     {
       reason: 'all_not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'All requested indicator codes returned empty metadata.',
+      when: 'No requested indicator code resolved to a catalog entry.',
       recovery:
         'Use who_search_indicators to find valid indicator codes matching your topic and retry.',
     },
@@ -98,27 +119,37 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
       indicatorCode: string;
       indicatorName: string;
       dimensions: Array<{ dimension: string; dimensionName: string }>;
+      dimensionsNote?: string;
     }> = [];
     const notFound: string[] = [];
 
+    // Existence and dimension coverage are separate signals. A code is absent only when
+    // neither resolves; an empty dimension list on a code the catalog names is a gap in
+    // the upstream IndicatorDimension table, not a missing indicator.
     for (const code of input.indicator_codes) {
-      const dims = dimMap.get(code);
-      if (!dims) {
+      const dims = dimMap.get(code) ?? [];
+      const name = nameMap.get(code);
+      if (dims.length === 0 && name === undefined) {
         notFound.push(code);
-      } else {
-        found.push({
-          indicatorCode: code,
-          indicatorName: nameMap.get(code) ?? code,
-          dimensions: dims,
-        });
+        continue;
       }
+      found.push({
+        indicatorCode: code,
+        indicatorName: name ?? code,
+        dimensions: dims,
+        ...(dims.length === 0 && { dimensionsNote: DIMENSIONS_UNAVAILABLE }),
+      });
     }
 
     if (found.length === 0) {
-      throw ctx.fail('all_not_found', `None of the requested indicator codes returned metadata.`, {
-        codes: input.indicator_codes,
-        ...ctx.recoveryFor('all_not_found'),
-      });
+      throw ctx.fail(
+        'all_not_found',
+        'None of the requested indicator codes resolved to a GHO catalog entry.',
+        {
+          codes: input.indicator_codes,
+          ...ctx.recoveryFor('all_not_found'),
+        },
+      );
     }
 
     return { indicators: found, notFound };
@@ -129,8 +160,11 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     for (const ind of result.indicators) {
       lines.push(`## ${ind.indicatorCode}: ${ind.indicatorName}`);
       lines.push(
-        `**Dimensions:** ${ind.dimensions.map((d) => `${d.dimension} (${d.dimensionName})`).join(', ')}`,
+        ind.dimensions.length > 0
+          ? `**Dimensions:** ${ind.dimensions.map((d) => `${d.dimension} (${d.dimensionName})`).join(', ')}`
+          : '**Dimensions:** none listed',
       );
+      if (ind.dimensionsNote) lines.push(`**dimensionsNote:** ${ind.dimensionsNote}`);
       lines.push('');
     }
     if (result.notFound.length > 0) {

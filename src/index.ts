@@ -5,7 +5,11 @@
  */
 
 import { createApp } from '@cyanheads/mcp-ts-core';
-import { whoDimensionValuesResource } from './mcp-server/resources/definitions/who-dimension-values.resource.js';
+import {
+  whoDimensionValuesByParentResource,
+  whoDimensionValuesPageResource,
+  whoDimensionValuesResource,
+} from './mcp-server/resources/definitions/who-dimension-values.resource.js';
 import { whoIndicatorMetadataResource } from './mcp-server/resources/definitions/who-indicator-metadata.resource.js';
 import { whoGetIndicatorMetadata } from './mcp-server/tools/definitions/who-get-indicator-metadata.tool.js';
 import { whoListDimensionValues } from './mcp-server/tools/definitions/who-list-dimension-values.tool.js';
@@ -26,7 +30,12 @@ await createApp({
     whoGetIndicatorMetadata,
     whoQueryIndicatorData,
   ],
-  resources: [whoIndicatorMetadataResource, whoDimensionValuesResource],
+  resources: [
+    whoIndicatorMetadataResource,
+    whoDimensionValuesResource,
+    whoDimensionValuesPageResource,
+    whoDimensionValuesByParentResource,
+  ],
   prompts: [],
   instructions:
     'WHO Global Health Observatory MCP server. Primary workflow: ' +
