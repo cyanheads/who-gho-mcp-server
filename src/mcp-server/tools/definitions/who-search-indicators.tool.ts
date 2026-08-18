@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { wellFormed } from '@/utils/well-formed.js';
 
 export const whoSearchIndicators = tool('who_search_indicators', {
   title: 'Search WHO GHO Indicators',
@@ -109,6 +110,10 @@ export const whoSearchIndicators = tool('who_search_indicators', {
       limit: input.limit,
       offset: input.offset,
     });
+    // Every echo of the keyword — the enrichment, the notices, the failure message —
+    // reads this copy, so an unpaired surrogate never reaches the frame. The upstream
+    // still receives the keyword as sent.
+    const echoedQuery = wellFormed(input.query);
     const { indicators, total } = await getGhoService().listIndicators(
       { query: input.query, limit: input.limit, offset: input.offset },
       ctx,
@@ -121,7 +126,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     if (indicators.length === 0 && !pastEnd) {
       throw ctx.fail(
         'no_results',
-        `No indicators matched "${input.query}".`,
+        `No indicators matched "${echoedQuery}".`,
         ctx.recoveryFor('no_results'),
       );
     }
@@ -129,7 +134,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     const nextOffset = input.offset + indicators.length;
     const hasMore = nextOffset < total;
 
-    ctx.enrich.echo(input.query);
+    ctx.enrich.echo(echoedQuery);
     ctx.enrich.total(total);
     ctx.enrich({
       offset: input.offset,
@@ -141,7 +146,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     // `notice` is last-wins — compose the applicable segment and write it once.
     if (pastEnd) {
       ctx.enrich.notice(
-        `Offset ${input.offset} is at or beyond the ${total} indicators matching "${input.query}"; ` +
+        `Offset ${input.offset} is at or beyond the ${total} indicators matching "${echoedQuery}"; ` +
           `the last reachable offset is ${total - 1}.`,
       );
     } else if (hasMore) {

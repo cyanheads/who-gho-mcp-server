@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { wellFormed } from '@/utils/well-formed.js';
 
 const SEX_VALUES = ['SEX_BTSX', 'SEX_FMLE', 'SEX_MLE'] as const;
 
@@ -347,6 +348,13 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       );
     }
 
+    // Echo copies for the response. `indicator_code` reaches a URL path segment, where
+    // the service refuses an unpaired surrogate outright, so in practice only the filter
+    // values can carry one this far — all are repaired so the echo boundary holds without
+    // depending on which upstream route a value happens to take. The raw values still go
+    // to the service, leaving the request and its fast-fail on the code unchanged.
+    const echoedCode = wellFormed(input.indicator_code);
+
     ctx.log.info('Querying indicator data', {
       indicatorCode: input.indicator_code,
       spatialCount,
@@ -389,14 +397,14 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           throw ctx.fail(
             'invalid_query',
             'The GHO API rejected the generated query — a supplied filter value is not a valid OData literal.',
-            { indicatorCode: input.indicator_code, ...ctx.recoveryFor('invalid_query') },
+            { indicatorCode: echoedCode, ...ctx.recoveryFor('invalid_query') },
           );
         }
         if (reason === 'indicator_not_found') {
           throw ctx.fail(
             'indicator_not_found',
-            `Indicator code "${input.indicator_code}" not found in the GHO catalog.`,
-            { indicatorCode: input.indicator_code, ...ctx.recoveryFor('indicator_not_found') },
+            `Indicator code "${echoedCode}" not found in the GHO catalog.`,
+            { indicatorCode: echoedCode, ...ctx.recoveryFor('indicator_not_found') },
           );
         }
         throw err;
@@ -409,19 +417,19 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     if (rows.length === 0 && !pastEnd) {
       throw ctx.fail(
         'no_data',
-        `Indicator "${input.indicator_code}" returned no data for the applied filters.`,
-        { indicatorCode: input.indicator_code, ...ctx.recoveryFor('no_data') },
+        `Indicator "${echoedCode}" returned no data for the applied filters.`,
+        { indicatorCode: echoedCode, ...ctx.recoveryFor('no_data') },
       );
     }
 
     // Build a human-readable spatial filter summary for the enrichment echo.
     let spatialFilter: string | undefined;
     if (input.country_codes?.length)
-      spatialFilter = `country_codes: ${input.country_codes.join(',')}`;
+      spatialFilter = `country_codes: ${input.country_codes.map(wellFormed).join(',')}`;
     else if (input.region_codes?.length)
-      spatialFilter = `region_codes: ${input.region_codes.join(',')}`;
+      spatialFilter = `region_codes: ${input.region_codes.map(wellFormed).join(',')}`;
     else if (input.income_group_codes?.length)
-      spatialFilter = `income_group_codes: ${input.income_group_codes.join(',')}`;
+      spatialFilter = `income_group_codes: ${input.income_group_codes.map(wellFormed).join(',')}`;
 
     const yearRange =
       input.year_from != null && input.year_to != null
@@ -436,11 +444,11 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
 
     ctx.enrich({
       appliedFilters: {
-        indicatorCode: input.indicator_code,
+        indicatorCode: echoedCode,
         ...(spatialFilter && { spatialFilter }),
         ...(yearRange && { yearRange }),
         ...(input.sex && { sex: input.sex }),
-        ...(input.dim1_value && { dim1Value: input.dim1_value }),
+        ...(input.dim1_value && { dim1Value: wellFormed(input.dim1_value) }),
         ordering: sortMode.label,
       },
       totalRows,

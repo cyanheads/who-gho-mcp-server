@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { wellFormed } from '@/utils/well-formed.js';
 
 export const whoListDimensionValues = tool('who_list_dimension_values', {
   title: 'List GHO Dimension Values',
@@ -135,6 +136,12 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       offset: input.offset,
       filtered: input.parent_code != null,
     });
+    // Echo copies for the response. `dimension` reaches a URL path segment, where the
+    // service refuses an unpaired surrogate outright, so only `parent_code` can carry
+    // one this far — both are repaired so the echo boundary holds without depending on
+    // which upstream route a value happens to take.
+    const echoedDimension = wellFormed(input.dimension);
+    const echoedParentCode = input.parent_code ? wellFormed(input.parent_code) : undefined;
     const { values, total } = await getGhoService()
       .listDimensionValues(
         {
@@ -167,7 +174,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
     if (total === 0 && !input.parent_code) {
       throw ctx.fail(
         'dimension_not_found',
-        `Dimension "${input.dimension}" returned no values — it does not exist in the GHO catalog.`,
+        `Dimension "${echoedDimension}" returned no values — it does not exist in the GHO catalog.`,
         ctx.recoveryFor('dimension_not_found'),
       );
     }
@@ -192,7 +199,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       );
     } else if (total === 0) {
       ctx.enrich.notice(
-        `No values in dimension "${input.dimension}" have parent_code "${input.parent_code}". ` +
+        `No values in dimension "${echoedDimension}" have parent_code "${echoedParentCode}". ` +
           'The dimension exists; the filter matched nothing. Drop parent_code to list every ' +
           'value, or use who_list_dimension_values on the parent dimension to find a valid code.',
       );
@@ -204,7 +211,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       );
     }
 
-    return { dimension: input.dimension, values };
+    return { dimension: echoedDimension, values };
   },
 
   format: (result) => {

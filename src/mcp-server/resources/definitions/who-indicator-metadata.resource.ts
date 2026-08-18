@@ -6,6 +6,7 @@
 import { resource, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { wellFormed } from '@/utils/well-formed.js';
 
 /**
  * Emitted for a code that resolves in the `Indicator` catalog but has no rows in the
@@ -61,17 +62,21 @@ export const whoIndicatorMetadataResource = resource('who://indicator/{indicator
     ]);
     const dims = dimMap.get(params.indicatorCode) ?? [];
     const match = nameResult.indicators.find((i) => i.indicatorCode === params.indicatorCode);
+    // The code reaches the upstream through `$filter`, never a URL path segment, so an
+    // unpaired surrogate is encoded rather than refused and arrives here intact. Lookups
+    // key on the code as received; the response carries the repaired copy.
+    const echoedCode = wellFormed(params.indicatorCode);
     // Existence and dimension coverage are separate signals — the code is absent only
     // when neither resolves. An empty dimension list on a named code is an upstream gap.
     if (dims.length === 0 && !match) {
       throw notFound(
-        `Indicator "${params.indicatorCode}" does not exist in the GHO catalog. Use who_search_indicators to find valid codes.`,
-        { indicatorCode: params.indicatorCode },
+        `Indicator "${echoedCode}" does not exist in the GHO catalog. Use who_search_indicators to find valid codes.`,
+        { indicatorCode: echoedCode },
       );
     }
     return {
-      indicatorCode: params.indicatorCode,
-      indicatorName: match?.indicatorName ?? params.indicatorCode,
+      indicatorCode: echoedCode,
+      indicatorName: match?.indicatorName ?? echoedCode,
       dimensions: dims,
       ...(dims.length === 0 && { dimensionsNote: DIMENSIONS_UNAVAILABLE }),
     };

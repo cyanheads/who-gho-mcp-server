@@ -14,6 +14,7 @@ import {
   createInMemoryStorage,
   createMockContext,
   type FetchMockHarness,
+  runToolContract,
 } from '@cyanheads/mcp-ts-core/testing';
 import { ADVERSARIAL_STRINGS, fuzzTool } from '@cyanheads/mcp-ts-core/testing/fuzz';
 import { afterAll, beforeAll, expect, it } from 'vitest';
@@ -22,6 +23,7 @@ import { whoListDimensionValues } from '@/mcp-server/tools/definitions/who-list-
 import { whoQueryIndicatorData } from '@/mcp-server/tools/definitions/who-query-indicator-data.tool.js';
 import { whoSearchIndicators } from '@/mcp-server/tools/definitions/who-search-indicators.tool.js';
 import { initGhoService } from '@/services/gho/gho-service.js';
+import { expectWellFormedFrame } from '../serialized-frame.js';
 
 /** Bounded so the lane stays well inside its 15s timeout and never varies run to run. */
 const FUZZ = { numRuns: 50, numAdversarial: 30, timeout: 2_000 } as const;
@@ -208,3 +210,59 @@ it.each([
 it('drove generated inputs all the way through to the upstream boundary', () => {
   expect(upstream.calls.length).toBeGreaterThan(0);
 });
+
+/**
+ * #19: a caller string echoed into output, enrichment, or failure data must leave the
+ * frame decodable by a strict JSON reader. Asserted on `JSON.stringify` of the whole
+ * contract result rather than on any one field, because a field comparison written with
+ * the same defect passes against the unfixed code. Deterministic: the corpus is a fixed
+ * list and every entry is driven at every input that reaches an echo.
+ */
+const ECHO_CASES: readonly (readonly [string, (value: string) => Promise<unknown>])[] = [
+  ['who_search_indicators query', (query) => runToolContract(whoSearchIndicators, { query })],
+  [
+    'who_get_indicator_metadata indicator_codes',
+    (code) => runToolContract(whoGetIndicatorMetadata, { indicator_codes: [code] }),
+  ],
+  [
+    'who_list_dimension_values dimension',
+    (dimension) => runToolContract(whoListDimensionValues, { dimension }),
+  ],
+  [
+    'who_list_dimension_values parent_code',
+    (parent_code) => runToolContract(whoListDimensionValues, { dimension: 'COUNTRY', parent_code }),
+  ],
+  [
+    'who_query_indicator_data indicator_code',
+    (indicator_code) => runToolContract(whoQueryIndicatorData, { indicator_code }),
+  ],
+  [
+    'who_query_indicator_data country_codes',
+    (code) =>
+      runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        country_codes: [code],
+      }),
+  ],
+  [
+    'who_query_indicator_data dim1_value',
+    (dim1_value) =>
+      runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        sex: 'SEX_BTSX',
+        dim1_value,
+      }),
+  ],
+];
+
+it.each(ECHO_CASES)(
+  'serializes every adversarial %s into a well-formed frame',
+  async (name, run) => {
+    for (const candidate of ADVERSARIAL_STRINGS) {
+      expectWellFormedFrame(
+        await run(candidate),
+        `${name} = ${JSON.stringify(candidate).slice(0, 40)}`,
+      );
+    }
+  },
+);

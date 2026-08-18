@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { wellFormed } from '@/utils/well-formed.js';
 
 /**
  * Emitted for a code that resolves in the `Indicator` catalog but has no rows in the
@@ -129,13 +130,16 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     for (const code of input.indicator_codes) {
       const dims = dimMap.get(code) ?? [];
       const name = nameMap.get(code);
+      // Both maps key on the code as received; what goes back into the response is the
+      // repaired copy, so an unpaired surrogate cannot reach the frame from either arm.
+      const echoedCode = wellFormed(code);
       if (dims.length === 0 && name === undefined) {
-        notFound.push(code);
+        notFound.push(echoedCode);
         continue;
       }
       found.push({
-        indicatorCode: code,
-        indicatorName: name ?? code,
+        indicatorCode: echoedCode,
+        indicatorName: name ?? echoedCode,
         dimensions: dims,
         ...(dims.length === 0 && { dimensionsNote: DIMENSIONS_UNAVAILABLE }),
       });
@@ -146,7 +150,7 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
         'all_not_found',
         'None of the requested indicator codes resolved to a GHO catalog entry.',
         {
-          codes: input.indicator_codes,
+          codes: input.indicator_codes.map(wellFormed),
           ...ctx.recoveryFor('all_not_found'),
         },
       );

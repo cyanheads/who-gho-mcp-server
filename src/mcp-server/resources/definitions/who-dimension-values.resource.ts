@@ -8,6 +8,7 @@
 import { type Context, resource, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { wellFormed } from '@/utils/well-formed.js';
 
 /** Page size applied when the URI carries no explicit limit. Matches the tool's default. */
 const DEFAULT_LIMIT = 100;
@@ -78,10 +79,17 @@ async function readPage(
 ): Promise<z.infer<typeof outputSchema>> {
   const { values, total } = await getGhoService().listDimensionValues(params, ctx);
 
+  // Echo copies for the payload. `dimensionCode` reaches a URL path segment, where the
+  // service refuses an unpaired surrogate outright, so only `parentCode` can carry one
+  // this far — both are repaired so the echo boundary holds without depending on which
+  // upstream route a value happens to take.
+  const echoedDimension = wellFormed(params.dimensionCode);
+  const echoedParent = params.parentCode ? wellFormed(params.parentCode) : undefined;
+
   if (total === 0 && !params.parentCode) {
     throw notFound(
-      `Dimension "${params.dimensionCode}" returned no values — it does not exist in the GHO catalog. Use who_list_dimensions to discover valid codes.`,
-      { dimensionCode: params.dimensionCode },
+      `Dimension "${echoedDimension}" returned no values — it does not exist in the GHO catalog. Use who_list_dimensions to discover valid codes.`,
+      { dimensionCode: echoedDimension },
     );
   }
 
@@ -96,7 +104,7 @@ async function readPage(
       `the last reachable offset is ${total - 1}.`;
   } else if (total === 0) {
     notice =
-      `No values in dimension "${params.dimensionCode}" have parentCode "${params.parentCode}". ` +
+      `No values in dimension "${echoedDimension}" have parentCode "${echoedParent}". ` +
       'The dimension exists; the filter matched nothing. Read the unfiltered URI to list every value.';
   } else if (hasMore) {
     notice =
@@ -105,7 +113,7 @@ async function readPage(
   }
 
   return {
-    dimension: params.dimensionCode,
+    dimension: echoedDimension,
     values,
     totalCount: total,
     offset: params.offset,
