@@ -317,6 +317,13 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       recovery:
         'Check the spatial codes and dim1_value for stray quotes or punctuation, then confirm valid codes with who_list_dimension_values and retry.',
     },
+    {
+      reason: 'malformed_identifier',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'indicator_code carries an unpaired UTF-16 surrogate, so it cannot be encoded into the request URL.',
+      recovery:
+        'Re-send indicator_code as text with no unpaired UTF-16 surrogate — codes are ASCII letters, digits, and underscores, and who_search_indicators returns valid ones.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -369,6 +376,15 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         // Checking data.reason rather than err.code avoids referencing NotFound in handler
         // source (which the linter flags as a direct throw bypassing ctx.fail).
         const reason = (err as { data?: { reason?: string } } | null)?.data?.reason;
+        // The rejected code is left out of the failure data on purpose: it is the
+        // caller's own unpaired surrogate, and echoing it puts it back on the wire.
+        if (reason === 'malformed_identifier') {
+          throw ctx.fail(
+            'malformed_identifier',
+            'The indicator_code value cannot be encoded into a request URL — it contains an unpaired UTF-16 surrogate.',
+            ctx.recoveryFor('malformed_identifier'),
+          );
+        }
         if (reason === 'invalid_query') {
           throw ctx.fail(
             'invalid_query',

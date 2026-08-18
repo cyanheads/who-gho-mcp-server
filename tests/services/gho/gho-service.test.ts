@@ -6,6 +6,7 @@
  * @module tests/services/gho/gho-service.test
  */
 
+import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import {
   createFetchMock,
@@ -57,6 +58,13 @@ const countryValue = {
   ParentTitle: 'Western Pacific',
   ParentDimension: 'REGION',
 };
+
+/**
+ * A lone high surrogate — a legal JavaScript string with no UTF-8 encoding, so
+ * `encodeURIComponent` throws `URIError` on it. Only the two identifiers that reach a
+ * URL path segment are exposed to that; `URLSearchParams` substitutes U+FFFD instead.
+ */
+const LONE_SURROGATE = '\uD800';
 
 const DESC_ORDER = 'TimeDim desc,SpatialDim,Dim1,Id';
 const ASC_ORDER = 'TimeDim asc,SpatialDim,Dim1,Id';
@@ -419,6 +427,96 @@ describe('GhoService — request construction', () => {
 
     expect(map.get('PHE_HHAIR_PROP_POP_CLEAN_FUELS')).toEqual([]);
   });
+
+  it('percent-encodes an indicator code into the path segment it occupies', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(BASE),
+      respond: () => Response.json({ '@odata.count': 0, value: [] }),
+    });
+
+    await newService().queryData(
+      { ...baseQueryParams, indicatorCode: 'A B/C' },
+      createMockContext(),
+    );
+
+    // The code is a path segment, not a query value: a bare slash would otherwise
+    // address a different collection entirely.
+    expect(new URL(http.calls[0]!.request.url).pathname).toBe('/api/A%20B%2FC');
+  });
+
+  it('percent-encodes a dimension code into the path segment it occupies', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(BASE),
+      respond: () => Response.json({ '@odata.count': 0, value: [] }),
+    });
+
+    await newService().listDimensionValues(
+      { dimensionCode: 'A B/C', limit: 100, offset: 0 },
+      createMockContext(),
+    );
+
+    expect(new URL(http.calls[0]!.request.url).pathname).toBe(
+      '/api/DIMENSION/A%20B%2FC/DimensionValues',
+    );
+  });
+
+  it('encodes an astral character in a path identifier rather than rejecting it (#18)', async () => {
+    http.route({
+      match: (req) => req.url.startsWith(BASE),
+      respond: () => Response.json({ '@odata.count': 0, value: [] }),
+    });
+
+    // A paired surrogate is well-formed UTF-16 and encodes fine — only an unpaired
+    // one is rejected, so the guard must not reach for the whole surrogate range.
+    await newService().listDimensionValues(
+      { dimensionCode: '\u{1F600}', limit: 100, offset: 0 },
+      createMockContext(),
+    );
+
+    expect(new URL(http.calls[0]!.request.url).pathname).toBe(
+      '/api/DIMENSION/%F0%9F%98%80/DimensionValues',
+    );
+  });
+
+  it.each([
+    [
+      'listDimensionValues parentCode',
+      (svc: GhoService, ctx: Context) =>
+        svc.listDimensionValues(
+          { dimensionCode: 'COUNTRY', limit: 100, offset: 0, parentCode: LONE_SURROGATE },
+          ctx,
+        ),
+    ],
+    [
+      'queryData countryCodes',
+      (svc: GhoService, ctx: Context) =>
+        svc.queryData({ ...baseQueryParams, countryCodes: [LONE_SURROGATE] }, ctx),
+    ],
+    [
+      'listIndicators indicatorCode',
+      (svc: GhoService, ctx: Context) =>
+        svc.listIndicators({ indicatorCode: LONE_SURROGATE, limit: 1, offset: 0 }, ctx),
+    ],
+    [
+      'getIndicatorDimensions code',
+      (svc: GhoService, ctx: Context) => svc.getIndicatorDimensions([LONE_SURROGATE], ctx),
+    ],
+  ])(
+    'reaches the upstream with a lone surrogate in %s — query values are not path segments (#18)',
+    async (_name, call) => {
+      http.route({
+        match: (req) => req.url.startsWith(BASE),
+        respond: () => Response.json({ '@odata.count': 0, value: [] }),
+      });
+
+      await call(newService(), createMockContext());
+
+      // URLSearchParams substitutes U+FFFD for an unpaired surrogate instead of
+      // throwing, so these fields carry no fail-fast obligation.
+      expect(http.calls).toHaveLength(1);
+      expect(http.calls[0]!.request.url).toContain('%EF%BF%BD');
+    },
+  );
 });
 
 describe('GhoService — retry classification', () => {
@@ -646,5 +744,91 @@ describe('GhoService — client-facing errors carry no encoded query string', ()
     expect(error).toBeDefined();
     expect(error?.data?.url).toBeUndefined();
     expect(error?.message ?? '').not.toContain(BASE);
+  });
+});
+
+describe('GhoService — malformed path identifiers (#18)', () => {
+  let http: FetchMockHarness;
+
+  beforeEach(() => {
+    http = createFetchMock();
+    http.install();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    http.restore();
+  });
+
+  /**
+   * Settles a call expected to fail without entering the retry budget: flushes the
+   * pending microtasks, then asserts no backoff sleep was scheduled. A retried failure
+   * parks one here and settles roughly six seconds later.
+   */
+  const settleWithoutBackoff = async (promise: Promise<unknown>): Promise<ServiceError> => {
+    const caught = promise.then(
+      () => undefined,
+      (error: unknown) => error as ServiceError,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
+    const error = await caught;
+    expect(error).toBeDefined();
+    return error as ServiceError;
+  };
+
+  const hintOf = (error: ServiceError): string | undefined =>
+    (error.data?.recovery as { hint?: string } | undefined)?.hint;
+
+  it.each([
+    ['a lone high surrogate', LONE_SURROGATE],
+    ['a lone low surrogate', '\uDFFF'],
+    ['a lone surrogate inside an otherwise valid code', `WHOSIS${LONE_SURROGATE}000001`],
+  ])('queryData fails on %s in one attempt', async (_name, indicatorCode) => {
+    const error = await settleWithoutBackoff(
+      newService().queryData({ ...baseQueryParams, indicatorCode }, createMockContext()),
+    );
+
+    expect(http.calls).toHaveLength(0);
+    expect(error.data?.reason).toBe('malformed_identifier');
+    expect(error.data?.field).toBe('indicatorCode');
+    expect(hintOf(error)).toContain('indicatorCode');
+    // withRetry stamps this only when it exhausts the budget.
+    expect(error.data?.retryAttempts).toBeUndefined();
+    expect(error.message ?? '').not.toMatch(/failed after \d+ attempts/);
+  });
+
+  it.each([
+    ['a lone high surrogate', LONE_SURROGATE],
+    ['a lone low surrogate', '\uDFFF'],
+    ['a lone surrogate inside an otherwise valid code', `COUNTRY${LONE_SURROGATE}`],
+  ])('listDimensionValues fails on %s in one attempt', async (_name, dimensionCode) => {
+    const error = await settleWithoutBackoff(
+      newService().listDimensionValues(
+        { dimensionCode, limit: 100, offset: 0 },
+        createMockContext(),
+      ),
+    );
+
+    expect(http.calls).toHaveLength(0);
+    expect(error.data?.reason).toBe('malformed_identifier');
+    expect(error.data?.field).toBe('dimensionCode');
+    expect(hintOf(error)).toContain('dimensionCode');
+    expect(error.data?.retryAttempts).toBeUndefined();
+    expect(error.message ?? '').not.toMatch(/failed after \d+ attempts/);
+  });
+
+  it('does not echo the rejected identifier or the upstream base URL', async () => {
+    const error = await settleWithoutBackoff(
+      newService().queryData(
+        { ...baseQueryParams, indicatorCode: LONE_SURROGATE },
+        createMockContext(),
+      ),
+    );
+
+    const serialized = JSON.stringify({ message: error.message, data: error.data });
+    expect(serialized).not.toContain('\\ud800');
+    expect(serialized).not.toContain(BASE);
   });
 });

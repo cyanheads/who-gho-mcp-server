@@ -119,6 +119,13 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       recovery:
         'Use who_list_dimensions to discover valid dimension type codes and retry with a correct code.',
     },
+    {
+      reason: 'malformed_identifier',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'dimension carries an unpaired UTF-16 surrogate, so it cannot be encoded into the request URL.',
+      recovery:
+        'Re-send dimension as text with no unpaired UTF-16 surrogate — dimension type codes are ASCII letters and digits, and who_list_dimensions returns valid ones.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -128,15 +135,30 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       offset: input.offset,
       filtered: input.parent_code != null,
     });
-    const { values, total } = await getGhoService().listDimensionValues(
-      {
-        dimensionCode: input.dimension,
-        limit: input.limit,
-        offset: input.offset,
-        ...(input.parent_code && { parentCode: input.parent_code }),
-      },
-      ctx,
-    );
+    const { values, total } = await getGhoService()
+      .listDimensionValues(
+        {
+          dimensionCode: input.dimension,
+          limit: input.limit,
+          offset: input.offset,
+          ...(input.parent_code && { parentCode: input.parent_code }),
+        },
+        ctx,
+      )
+      .catch((err: unknown) => {
+        // Re-fail with the typed contract reason so the recovery hint names the input
+        // field. The rejected code is left out of the failure data on purpose: it is
+        // the caller's own unpaired surrogate, and echoing it puts it back on the wire.
+        const reason = (err as { data?: { reason?: string } } | null)?.data?.reason;
+        if (reason === 'malformed_identifier') {
+          throw ctx.fail(
+            'malformed_identifier',
+            'The dimension value cannot be encoded into a request URL — it contains an unpaired UTF-16 surrogate.',
+            ctx.recoveryFor('malformed_identifier'),
+          );
+        }
+        throw err;
+      });
 
     // The upstream answers an unknown dimension and a filter that matched nothing
     // identically — HTTP 200 with an empty array — so only an unfiltered empty result

@@ -210,3 +210,37 @@ describe('whoListDimensionValues', () => {
     expect(text).toContain('COUNTRY');
   });
 });
+
+describe('whoListDimensionValues — malformed dimension code (#18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('re-wraps a service malformed_identifier into the typed contract failure', async () => {
+    mockService.listDimensionValues.mockRejectedValue({
+      data: { reason: 'malformed_identifier' },
+    });
+    const ctx = createMockContext({ errors: whoListDimensionValues.errors });
+    const input = whoListDimensionValues.input.parse({ dimension: '\uD800' });
+
+    await expect(whoListDimensionValues.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'malformed_identifier',
+        recovery: { hint: expect.stringContaining('dimension') },
+      },
+    });
+  });
+
+  it('does not echo the rejected code back to the client', async () => {
+    mockService.listDimensionValues.mockRejectedValue({
+      data: { reason: 'malformed_identifier' },
+    });
+    const ctx = createMockContext({ errors: whoListDimensionValues.errors });
+    const input = whoListDimensionValues.input.parse({ dimension: '\uD800' });
+
+    const err = await Promise.resolve(whoListDimensionValues.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
+    expect(JSON.stringify(err)).not.toContain('\\ud800');
+  });
+});

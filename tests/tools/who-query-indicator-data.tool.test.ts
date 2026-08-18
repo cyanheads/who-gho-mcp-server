@@ -582,3 +582,35 @@ describe('whoQueryIndicatorData — rejected query propagation (#12)', () => {
     expect(serialized).not.toContain('ghoapi');
   });
 });
+
+describe('whoQueryIndicatorData — malformed indicator code (#18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('re-wraps a service malformed_identifier into the typed contract failure', async () => {
+    mockService.queryData.mockRejectedValue({ data: { reason: 'malformed_identifier' } });
+    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+    const input = whoQueryIndicatorData.input.parse({ indicator_code: '\uD800' });
+
+    await expect(whoQueryIndicatorData.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'malformed_identifier',
+        // The service names its own parameter; the tool names the input field the
+        // caller actually set.
+        recovery: { hint: expect.stringContaining('indicator_code') },
+      },
+    });
+  });
+
+  it('does not echo the rejected code back to the client', async () => {
+    mockService.queryData.mockRejectedValue({ data: { reason: 'malformed_identifier' } });
+    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+    const input = whoQueryIndicatorData.input.parse({ indicator_code: '\uD800' });
+
+    const err = await Promise.resolve(whoQueryIndicatorData.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
+    expect(JSON.stringify(err)).not.toContain('\\ud800');
+  });
+});

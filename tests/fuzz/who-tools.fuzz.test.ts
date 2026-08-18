@@ -8,12 +8,14 @@
  */
 
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import {
   createFetchMock,
   createInMemoryStorage,
+  createMockContext,
   type FetchMockHarness,
 } from '@cyanheads/mcp-ts-core/testing';
-import { fuzzTool } from '@cyanheads/mcp-ts-core/testing/fuzz';
+import { ADVERSARIAL_STRINGS, fuzzTool } from '@cyanheads/mcp-ts-core/testing/fuzz';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { whoGetIndicatorMetadata } from '@/mcp-server/tools/definitions/who-get-indicator-metadata.tool.js';
 import { whoListDimensionValues } from '@/mcp-server/tools/definitions/who-list-dimension-values.tool.js';
@@ -115,6 +117,87 @@ it('keeps who_get_indicator_metadata safe across generated code batches', async 
   expect(report.crashes).toHaveLength(0);
   expect(report.leaks).toHaveLength(0);
   expect(report.prototypePollution).toBe(false);
+});
+
+/**
+ * The generated phases above cannot reach a URL-path defect on their own: fast-check's
+ * string arbitrary emits printable ASCII, and the adversarial phase records leaks rather
+ * than crashes, so a raw throw escaping the handler leaves all four green. The corpus is
+ * therefore driven directly at the two inputs that become a URL path segment, where
+ * `encodeURIComponent` rejects an unpaired UTF-16 surrogate (#18).
+ *
+ * Runs every corpus string that the input schema accepts, and requires each rejection to
+ * be a well-formed MCP error rather than a raw throw.
+ */
+const survivesCorpus = async (
+  run: (value: string) => Promise<'skipped' | undefined>,
+): Promise<void> => {
+  let reached = 0;
+  for (const candidate of ADVERSARIAL_STRINGS) {
+    let rejection: unknown;
+    let skipped = false;
+    try {
+      skipped = (await run(candidate)) === 'skipped';
+    } catch (error) {
+      rejection = error;
+    }
+    if (skipped) continue;
+    reached++;
+    if (rejection !== undefined) {
+      expect(rejection, `adversarial input ${JSON.stringify(candidate)}`).toBeInstanceOf(McpError);
+    }
+  }
+  // A schema change that rejected the whole corpus would leave the loop asserting nothing.
+  expect(reached).toBeGreaterThan(0);
+};
+
+it('answers every adversarial who_query_indicator_data indicator_code with an MCP error', async () => {
+  await survivesCorpus(async (value) => {
+    const parsed = whoQueryIndicatorData.input.safeParse({ indicator_code: value });
+    if (!parsed.success) return 'skipped';
+    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+    await whoQueryIndicatorData.handler(parsed.data, ctx);
+    return;
+  });
+});
+
+it('answers every adversarial who_list_dimension_values dimension with an MCP error', async () => {
+  await survivesCorpus(async (value) => {
+    const parsed = whoListDimensionValues.input.safeParse({ dimension: value });
+    if (!parsed.success) return 'skipped';
+    const ctx = createMockContext({ errors: whoListDimensionValues.errors });
+    await whoListDimensionValues.handler(parsed.data, ctx);
+    return;
+  });
+});
+
+/**
+ * The corpus member that reaches the defect, asserted by name so the lane names the
+ * contract it is protecting rather than only rejecting a raw throw.
+ */
+it.each([
+  [
+    'who_query_indicator_data',
+    async () => {
+      const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
+      return whoQueryIndicatorData.handler(
+        whoQueryIndicatorData.input.parse({ indicator_code: '\uD800' }),
+        ctx,
+      );
+    },
+  ],
+  [
+    'who_list_dimension_values',
+    async () => {
+      const ctx = createMockContext({ errors: whoListDimensionValues.errors });
+      return whoListDimensionValues.handler(
+        whoListDimensionValues.input.parse({ dimension: '\uD800' }),
+        ctx,
+      );
+    },
+  ],
+])('fails %s on the corpus lone surrogate with the declared reason', async (_name, run) => {
+  await expect(run()).rejects.toMatchObject({ data: { reason: 'malformed_identifier' } });
 });
 
 /**

@@ -10,6 +10,7 @@ import {
   type McpError,
   notFound,
   serviceUnavailable,
+  validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { httpErrorFromResponse, withRetry } from '@cyanheads/mcp-ts-core/utils';
@@ -113,7 +114,7 @@ export class GhoService {
         if (params.parentCode) {
           qs.set('$filter', `ParentCode eq '${this.escapeODataString(params.parentCode)}'`);
         }
-        const url = `${this.baseUrl}/DIMENSION/${encodeURIComponent(params.dimensionCode)}/DimensionValues?${qs}`;
+        const url = `${this.baseUrl}/DIMENSION/${this.encodePathSegment(params.dimensionCode, 'dimensionCode')}/DimensionValues?${qs}`;
         const data = await this.getJson<ODataEnvelope<RawDimensionValue>>(url, ctx);
         return {
           values: data.value.map((v) => ({
@@ -230,7 +231,7 @@ export class GhoService {
           qs.set('$filter', filterParts.join(' and '));
         }
 
-        const url = `${this.baseUrl}/${encodeURIComponent(params.indicatorCode)}?${qs}`;
+        const url = `${this.baseUrl}/${this.encodePathSegment(params.indicatorCode, 'indicatorCode')}?${qs}`;
         const response = await this.fetchRaw(url, ctx);
 
         // 404 means unknown indicator code
@@ -383,6 +384,35 @@ export class GhoService {
   /** Escape single quotes in OData string values. */
   private escapeODataString(value: string): string {
     return value.replace(/'/g, "''");
+  }
+
+  /**
+   * Encode a caller-supplied identifier into a URL path segment.
+   *
+   * `encodeURIComponent` throws `URIError` on an unpaired UTF-16 surrogate, and only the
+   * identifiers that reach a path segment are exposed to it — every other caller value
+   * goes through `URLSearchParams`, which substitutes U+FFFD instead of throwing. A raw
+   * `URIError` is not an `McpError`, so `withRetry`'s default predicate reads it as
+   * transient and spends the whole budget on input that can never succeed; a
+   * `ValidationError` is outside the transient set and fails on the attempt that raised
+   * it. The rejected value is deliberately absent from the message and data — the caller
+   * sent it, and echoing it back puts an unpaired surrogate on the wire.
+   */
+  private encodePathSegment(value: string, field: string): string {
+    try {
+      return encodeURIComponent(value);
+    } catch {
+      throw validationError(
+        `The ${field} value cannot be encoded into a request URL — it contains an unpaired UTF-16 surrogate.`,
+        {
+          reason: 'malformed_identifier',
+          field,
+          recovery: {
+            hint: `Re-send ${field} as text with no unpaired UTF-16 surrogate — GHO codes are ASCII letters, digits, and underscores.`,
+          },
+        },
+      );
+    }
   }
 }
 

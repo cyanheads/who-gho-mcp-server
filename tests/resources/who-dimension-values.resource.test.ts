@@ -3,6 +3,7 @@
  * @module tests/resources/who-dimension-values.resource.test
  */
 
+import { validationError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -223,5 +224,57 @@ describe('who dimension-values URI templates', () => {
       whoDimensionValuesByParentResource.name,
     ];
     expect(new Set(names).size).toBe(3);
+  });
+});
+
+describe('who://dimension resources — malformed dimension code (#18)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * The URI template variable reaches the same URL path segment the tool's `dimension`
+   * input does, so the resource shapes need the same fail-fast contract. They carry no
+   * error contract of their own — the reason and hint the service attaches are what the
+   * client reads, so this asserts they survive the resource handler untouched.
+   */
+  const malformed = () =>
+    validationError('Dimension code is not encodable.', {
+      reason: 'malformed_identifier',
+      field: 'dimensionCode',
+      recovery: { hint: 'Supply dimensionCode as text with no unpaired UTF-16 surrogate.' },
+    });
+
+  it.each([
+    [
+      'bare',
+      () => whoDimensionValuesResource.handler({ dimensionCode: '\uD800' }, createMockContext()),
+    ],
+    [
+      'paged',
+      () =>
+        whoDimensionValuesPageResource.handler(
+          { dimensionCode: '\uD800', limit: 100, offset: 0 },
+          createMockContext(),
+        ),
+    ],
+    [
+      'parent-filtered',
+      () =>
+        whoDimensionValuesByParentResource.handler(
+          { dimensionCode: '\uD800', limit: 100, offset: 0, parentCode: 'EUR' },
+          createMockContext(),
+        ),
+    ],
+  ])('propagates the declared reason and hint from the %s URI shape', async (_shape, read) => {
+    mockService.listDimensionValues.mockRejectedValue(malformed());
+
+    await expect(read()).rejects.toMatchObject({
+      data: {
+        reason: 'malformed_identifier',
+        field: 'dimensionCode',
+        recovery: { hint: expect.stringContaining('dimensionCode') },
+      },
+    });
   });
 });
