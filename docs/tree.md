@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-08-18 20:19:52
+Generated on: 2026-08-18 20:42:53
 
 ```text
 who-gho-mcp-server/
@@ -155,6 +155,14 @@ who-gho-mcp-server/
 │   │       └── types.ts
 │   └── index.ts
 ├── tests/
+│   ├── fuzz/
+│   │   └── who-tools.fuzz.test.ts
+│   ├── integration/
+│   │   ├── gho-upstream.ts
+│   │   ├── who-get-indicator-metadata.int.test.ts
+│   │   ├── who-list-dimension-values.int.test.ts
+│   │   ├── who-query-indicator-data.int.test.ts
+│   │   └── who-search-indicators.int.test.ts
 │   ├── prompts/
 │   ├── resources/
 │   │   ├── who-dimension-values-extended.resource.test.ts
@@ -164,6 +172,8 @@ who-gho-mcp-server/
 │   ├── services/
 │   │   └── gho/
 │   │       └── gho-service.test.ts
+│   ├── smoke/
+│   │   └── definitions.smoke.test.ts
 │   └── tools/
 │       ├── who-get-indicator-metadata-extended.tool.test.ts
 │       ├── who-get-indicator-metadata.tool.test.ts

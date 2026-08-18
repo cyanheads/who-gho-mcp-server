@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.1](changelog/0.3.x/0.3.1.md) — 2026-08-18
+
+Internal only: adopts the framework's four-lane test scaffold (smoke, integration, fuzz alongside unit) plus a coverage script. No tool, resource, or source change. The new fuzz lane found a real defect, filed as #18 and left unfixed in this release.
+
 ## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-08-18 · ⚠️ Breaking
 
 Breaking: who_query_indicator_data renames spatialLabel to parentLocation and adds parentLocationCode — the field never held a name for the row's own spatial entity, only ever its parent WHO region; also fixes queryData() skipping classification of non-2xx responses that aren't OData error envelopes (#16).
