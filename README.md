@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.14-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/who-gho-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/who-gho-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/who-gho-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.14-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/who-gho-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.30.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/who-gho-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/who-gho-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -42,7 +42,7 @@ Search the WHO GHO indicator catalog by keyword.
 
 - Substring match on indicator names — try terms like `"life expectancy"`, `"immunization"`, `"mortality"`, `"diabetes"`, or `"HIV"`
 - Returns indicator codes and display names for use with `who_query_indicator_data`
-- Reports total matches; suggests narrowing when the limit is reached
+- Offset-based pagination (`offset`) over the filtered result set; reports `totalCount`, `hasMore`, `pageInfo`, `nextOffset`
 - Default limit 20, max 100
 
 ---
@@ -96,7 +96,8 @@ Query data rows for a single WHO GHO indicator.
 - Sex filter: `SEX_BTSX` (both), `SEX_FMLE`, `SEX_MLE` — only applies when the indicator uses SEX as its first cross-cutting dimension
 - Arbitrary `dim1_value` for indicators using non-SEX cross-cutting dimensions
 - Optional uncertainty interval bounds (`low`/`high`) via `include_uncertainty` (default true)
-- Default limit 200, max 1000; returns `totalRows` and `truncated` for handling large result sets
+- Deterministic row ordering (`sort`: `year_desc` default or `year_asc`) with offset-based pagination (`offset`); returns `totalRows`, `hasMore`, `pageInfo`, `nextOffset`
+- Default limit 200, max 1000
 - Primary data tool in the find-then-query workflow
 
 ## Resources
@@ -200,7 +201,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 bun run start:http
 
 ### Prerequisites
 
-- [Bun v1.3.2](https://bun.sh/) or higher (or Node.js ≥24).
+- [Bun v1.3.0](https://bun.sh/) or higher (or Node.js ≥24).
 - No API key required — the WHO GHO API is public.
 
 ### Installation
