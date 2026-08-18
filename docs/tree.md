@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-08-18 21:12:25
+Generated on: 2026-08-18 21:31:24
 
 ```text
 who-gho-mcp-server/
@@ -153,6 +153,8 @@ who-gho-mcp-server/
 │   │   └── gho/
 │   │       ├── gho-service.ts
 │   │       └── types.ts
+│   ├── utils/
+│   │   └── well-formed.ts
 │   └── index.ts
 ├── tests/
 │   ├── fuzz/
@@ -160,6 +162,7 @@ who-gho-mcp-server/
 │   ├── integration/
 │   │   ├── gho-upstream.ts
 │   │   ├── malformed-identifier.int.test.ts
+│   │   ├── well-formed-echo.int.test.ts
 │   │   ├── who-get-indicator-metadata.int.test.ts
 │   │   ├── who-list-dimension-values.int.test.ts
 │   │   ├── who-query-indicator-data.int.test.ts
@@ -175,19 +178,22 @@ who-gho-mcp-server/
 │   │       └── gho-service.test.ts
 │   ├── smoke/
 │   │   └── definitions.smoke.test.ts
-│   └── tools/
-│       ├── who-get-indicator-metadata-extended.tool.test.ts
-│       ├── who-get-indicator-metadata.tool.test.ts
-│       ├── who-list-dimension-values-extended.tool.test.ts
-│       ├── who-list-dimension-values.tool.test.ts
-│       ├── who-list-dimensions-extended.tool.test.ts
-│       ├── who-list-dimensions.tool.test.ts
-│       ├── who-list-indicators-extended.tool.test.ts
-│       ├── who-list-indicators.tool.test.ts
-│       ├── who-query-indicator-data-extended.tool.test.ts
-│       ├── who-query-indicator-data.tool.test.ts
-│       ├── who-search-indicators-extended.tool.test.ts
-│       └── who-search-indicators.tool.test.ts
+│   ├── tools/
+│   │   ├── who-get-indicator-metadata-extended.tool.test.ts
+│   │   ├── who-get-indicator-metadata.tool.test.ts
+│   │   ├── who-list-dimension-values-extended.tool.test.ts
+│   │   ├── who-list-dimension-values.tool.test.ts
+│   │   ├── who-list-dimensions-extended.tool.test.ts
+│   │   ├── who-list-dimensions.tool.test.ts
+│   │   ├── who-list-indicators-extended.tool.test.ts
+│   │   ├── who-list-indicators.tool.test.ts
+│   │   ├── who-query-indicator-data-extended.tool.test.ts
+│   │   ├── who-query-indicator-data.tool.test.ts
+│   │   ├── who-search-indicators-extended.tool.test.ts
+│   │   └── who-search-indicators.tool.test.ts
+│   ├── utils/
+│   │   └── well-formed.test.ts
+│   └── serialized-frame.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitattributes
