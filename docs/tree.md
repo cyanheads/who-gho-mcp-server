@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-08-18 20:42:53
+Generated on: 2026-08-18 21:12:25
 
 ```text
 who-gho-mcp-server/
@@ -159,6 +159,7 @@ who-gho-mcp-server/
 │   │   └── who-tools.fuzz.test.ts
 │   ├── integration/
 │   │   ├── gho-upstream.ts
+│   │   ├── malformed-identifier.int.test.ts
 │   │   ├── who-get-indicator-metadata.int.test.ts
 │   │   ├── who-list-dimension-values.int.test.ts
 │   │   ├── who-query-indicator-data.int.test.ts

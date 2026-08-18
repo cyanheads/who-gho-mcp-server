@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.2](changelog/0.3.x/0.3.2.md) — 2026-08-18
+
+Fixes a lone UTF-16 surrogate in indicator_code or dimension burning the full retry budget on an unclassified URIError instead of failing fast with a declared reason.
+
 ## [0.3.1](changelog/0.3.x/0.3.1.md) — 2026-08-18
 
 Internal only: adopts the framework's four-lane test scaffold (smoke, integration, fuzz alongside unit) plus a coverage script. No tool, resource, or source change. The new fuzz lane found a real defect, filed as #18 and left unfixed in this release.
