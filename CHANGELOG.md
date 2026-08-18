@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.15](changelog/0.1.x/0.1.15.md) — 2026-08-18
+
+who_query_indicator_data and who_search_indicators gain offset-based pagination and deterministic ordering (#8, #10, #13); year_from > year_to now rejected as a validation error and deterministic upstream query rejections fail fast instead of exhausting retries (#9, #12); @cyanheads/mcp-ts-core ^0.10.9 → ^0.11.5.
+
 ## [0.1.14](changelog/0.1.x/0.1.14.md) — 2026-06-20
 
 @cyanheads/mcp-ts-core ^0.10.6 → ^0.10.9: devcheck gains a Dependency Specifiers check rejecting floating ranges, git-repo guards on git-dependent checks, and packaging validation extended to plugin marketplace manifests; framework skills re-synced.

@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-06-20 18:31:28
+Generated on: 2026-08-18 18:51:01
 
 ```text
 who-gho-mcp-server/
@@ -10,10 +10,14 @@ who-gho-mcp-server/
 │   ├── mcp.json
 │   └── plugin.json
 ├── .github/
-│   └── ISSUE_TEMPLATE/
-│       ├── bug_report.yml
-│       ├── config.yml
-│       └── feature_request.yml
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── feature_request.yml
+│   ├── CODE_OF_CONDUCT.md
+│   ├── CONTRIBUTING.md
+│   ├── FUNDING.yml
+│   └── SECURITY.md
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
@@ -155,6 +159,9 @@ who-gho-mcp-server/
 │   │   ├── who-dimension-values.resource.test.ts
 │   │   ├── who-indicator-metadata-extended.resource.test.ts
 │   │   └── who-indicator-metadata.resource.test.ts
+│   ├── services/
+│   │   └── gho/
+│   │       └── gho-service.test.ts
 │   └── tools/
 │       ├── who-get-indicator-metadata-extended.tool.test.ts
 │       ├── who-get-indicator-metadata.tool.test.ts
@@ -170,6 +177,7 @@ who-gho-mcp-server/
 │       └── who-search-indicators.tool.test.ts
 ├── .dockerignore
 ├── .env.example
+├── .gitattributes
 ├── .gitignore
 ├── .mcpbignore
 ├── biome.json
