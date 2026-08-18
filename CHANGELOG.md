@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-08-18 · ⚠️ Breaking
+
+Breaking: who_list_dimension_values and its resource cap at 500 values/call, blocking single-call retrieval of the GHO and DHSMICSGEOREGION dimensions; adds offset/parent_code paging (#14) and stops reporting ~1,300 valid indicators as not found in who_get_indicator_metadata (#11).
+
 ## [0.1.15](changelog/0.1.x/0.1.15.md) — 2026-08-18
 
 who_query_indicator_data and who_search_indicators gain offset-based pagination and deterministic ordering (#8, #10, #13); year_from > year_to now rejected as a validation error and deterministic upstream query rejections fail fast instead of exhausting retries (#9, #12); @cyanheads/mcp-ts-core ^0.10.9 → ^0.11.5.

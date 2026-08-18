@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-08-18 18:51:01
+Generated on: 2026-08-18 19:40:26
 
 ```text
 who-gho-mcp-server/
@@ -23,6 +23,7 @@ who-gho-mcp-server/
 │   └── settings.json
 ├── changelog/
 │   ├── 0.1.x/
+│   ├── 0.2.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
