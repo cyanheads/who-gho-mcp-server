@@ -17,6 +17,15 @@ export default mergeConfig(
   defineConfig({
     resolve: { alias },
     test: {
+      coverage: {
+        /**
+         * The entry point is a composition root — a single `createApp({...})` call plus a
+         * `setup` callback that wires the service. There is no logic to assert, and the
+         * smoke lane already covers that every definition registers. Collecting it only
+         * drags the function ratio below the shared threshold.
+         */
+        exclude: ['src/index.ts'],
+      },
       projects: [
         {
           extends: true,
@@ -26,33 +35,30 @@ export default mergeConfig(
             exclude: ['tests/smoke/**', 'tests/integration/**', 'tests/fuzz/**'],
           },
         },
-        // Add more projects as your suite grows. Each inherits the framework's
-        // base config (environment, pool, coverage) and can override freely.
-        //
-        // {
-        //   extends: true,
-        //   test: {
-        //     name: 'smoke',
-        //     include: ['tests/smoke/**/*.test.ts'],
-        //   },
-        // },
-        // {
-        //   extends: true,
-        //   test: {
-        //     name: 'fuzz',
-        //     include: ['tests/fuzz/**/*.test.ts'],
-        //     testTimeout: 15_000,
-        //   },
-        // },
-        // {
-        //   extends: true,
-        //   test: {
-        //     name: 'integration',
-        //     include: ['tests/integration/**/*.test.ts'],
-        //     maxWorkers: 1,
-        //     testTimeout: 30_000,
-        //   },
-        // },
+        {
+          extends: true,
+          test: {
+            name: 'smoke',
+            include: ['tests/smoke/**/*.test.ts'],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'integration',
+            include: ['tests/integration/**/*.test.ts'],
+            maxWorkers: 1,
+            testTimeout: 30_000,
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'fuzz',
+            include: ['tests/fuzz/**/*.test.ts'],
+            testTimeout: 15_000,
+          },
+        },
       ],
     },
   }),
