@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.15-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/who-gho-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.30.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/who-gho-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/who-gho-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/who-gho-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.30.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/who-gho-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/who-gho-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -63,7 +63,8 @@ Fetch metadata for one to ten indicator codes in a single call.
 
 - Returns the full indicator name and the dimension types it supports (e.g. `COUNTRY`, `SEX`, `REGION`, `AGEGROUP`)
 - Call before `who_query_indicator_data` to confirm which filter dimensions are valid
-- Unresolved codes are reported in `notFound` rather than raising an error
+- Roughly 1,300 catalog indicators have no dimension listing upstream — those return `dimensions: []` plus a `dimensionsNote` pointing at `dim1Type`/`dim2Type` on a sample data row, not a not-found
+- Codes absent from the catalog are reported in `notFound` rather than raising an error
 
 ---
 
@@ -81,8 +82,12 @@ List all dimension type codes available in the GHO API.
 
 List valid filter values for a single dimension type.
 
-- Returns codes and labels for every value under the dimension (e.g. all 194 country ISO codes, all WHO region codes)
+- Returns codes and labels for the dimension's values (e.g. the 234 country entries, the 43 WHO region codes)
 - Includes optional parent hierarchy fields (`parentCode`, `parentLabel`, `parentDimension`)
+- `parent_code` narrows hierarchical dimensions — `dimension: "COUNTRY"`, `parent_code: "EUR"` returns the 58 country entries in the WHO European Region
+- Deterministic ordering by `Code` with offset-based pagination (`offset`); returns `totalCount`, `hasMore`, `pageInfo`, `nextOffset`
+- Default limit 100, max 500 — `GHO` (3,103 values) and `DHSMICSGEOREGION` (4,932) need paging
+- A `parent_code` that matches nothing returns an empty page, not an error; only an unfiltered empty result means the dimension does not exist
 - Use to confirm exact codes before passing them to `who_query_indicator_data`
 
 ---
@@ -105,7 +110,11 @@ Query data rows for a single WHO GHO indicator.
 | Type | URI | Description |
 |:---|:---|:---|
 | Resource | `who://indicator/{indicatorCode}/metadata` | Indicator name and supported filter dimensions for a single code |
-| Resource | `who://dimension/{dimensionCode}/values` | All valid values for a dimension type |
+| Resource | `who://dimension/{dimensionCode}/values` | First 100 values for a dimension type |
+| Resource | `who://dimension/{dimensionCode}/values{?limit,offset}` | One explicit page of a dimension type's values |
+| Resource | `who://dimension/{dimensionCode}/values{?limit,offset,parentCode}` | One explicit page, narrowed to a parent code |
+
+The three dimension-value URIs are registered separately because the MCP SDK's RFC 6570 matcher treats every query variable as required — a single template with optional variables would stop matching the bare URI. Supply every variable a template names.
 
 ## Recommended workflow
 
