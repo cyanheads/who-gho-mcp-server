@@ -117,6 +117,14 @@ export interface DataQueryParams {
   incomeGroupCodes?: string[];
   indicatorCode: string;
   limit: number;
+  /** Zero-based row offset, sent as `$skip`. */
+  offset: number;
+  /**
+   * OData `$orderby` clause, sent on every query. Required rather than optional so
+   * `$skip` can never page over an order the upstream does not guarantee; it must end
+   * in a unique key (`Id`) for the ordering to be total across page boundaries.
+   */
+  orderBy: string;
   regionCodes?: string[];
   sex?: string;
   yearFrom?: number;

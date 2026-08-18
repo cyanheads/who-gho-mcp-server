@@ -41,6 +41,19 @@ describe('whoSearchIndicators — input validation', () => {
     const parsed = whoSearchIndicators.input.parse({ query: 'test' });
     expect(parsed.limit).toBe(20);
   });
+
+  it('rejects a negative offset (min 0)', () => {
+    expect(() => whoSearchIndicators.input.parse({ query: 'test', offset: -1 })).toThrow();
+  });
+
+  it('rejects a non-integer offset', () => {
+    expect(() => whoSearchIndicators.input.parse({ query: 'test', offset: 2.5 })).toThrow();
+  });
+
+  it('accepts offset 0 and applies it as the default', () => {
+    expect(() => whoSearchIndicators.input.parse({ query: 'test', offset: 0 })).not.toThrow();
+    expect(whoSearchIndicators.input.parse({ query: 'test' }).offset).toBe(0);
+  });
 });
 
 describe('whoSearchIndicators — security', () => {

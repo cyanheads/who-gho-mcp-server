@@ -14,7 +14,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     'Returns indicator codes and names for use with who_query_indicator_data. ' +
     'The search uses a substring match on indicator names — try terms like "life expectancy", ' +
     '"immunization", "mortality", "diabetes", or "HIV". ' +
-    'If results are truncated, refine the query or use who_list_indicators to browse by offset.',
+    'If results are truncated, refine the query or page further into the same filtered result set with offset.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     query: z
@@ -28,6 +28,16 @@ export const whoSearchIndicators = tool('who_search_indicators', {
       .max(100)
       .default(20)
       .describe('Maximum number of indicators to return. Default 20, max 100.'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe(
+        'Zero-based offset into the matches for this query. Default 0. Read hasMore and ' +
+          'nextOffset from the response to continue paging. An offset at or beyond totalCount ' +
+          'returns an empty indicators array, not an error.',
+      ),
   }),
   output: z.object({
     indicators: z
@@ -58,11 +68,28 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     totalCount: z
       .number()
       .describe('Total indicators matching the query in the catalog, before the limit is applied.'),
+    offset: z.number().describe('Zero-based offset this page started at.'),
+    hasMore: z
+      .boolean()
+      .describe(
+        'True when more matches remain beyond this page. Pair with nextOffset to continue.',
+      ),
+    pageInfo: z
+      .string()
+      .describe(
+        'Human-readable page position, e.g. "offset 0, showing 20 of 3003". Use to construct the next offset.',
+      ),
+    nextOffset: z
+      .number()
+      .optional()
+      .describe(
+        'Offset to request for the next page. Absent when this page reached the end of the matches.',
+      ),
     notice: z
       .string()
       .optional()
       .describe(
-        'Present when the limit was reached and more results exist. Suggests how to get additional results.',
+        'Present when matches were withheld or the requested offset ran past the end of the result set. Explains how to reach the remaining matches.',
       ),
   },
 
@@ -77,22 +104,51 @@ export const whoSearchIndicators = tool('who_search_indicators', {
   ],
 
   async handler(input, ctx) {
-    ctx.log.info('Searching indicators', { query: input.query, limit: input.limit });
+    ctx.log.info('Searching indicators', {
+      query: input.query,
+      limit: input.limit,
+      offset: input.offset,
+    });
     const { indicators, total } = await getGhoService().listIndicators(
-      { query: input.query, limit: input.limit, offset: 0 },
+      { query: input.query, limit: input.limit, offset: input.offset },
       ctx,
     );
-    if (indicators.length === 0) {
-      throw ctx.fail('no_results', `No indicators matched "${input.query}".`, {
-        ...ctx.recoveryFor('no_results'),
-      });
+
+    // An empty page has two distinct causes once offset exists. Paging past the end
+    // matched `total` indicators and asked for a slice beyond them — "no indicators
+    // matched" is false for it, so it returns an empty page rather than an error.
+    const pastEnd = total > 0 && input.offset >= total;
+    if (indicators.length === 0 && !pastEnd) {
+      throw ctx.fail(
+        'no_results',
+        `No indicators matched "${input.query}".`,
+        ctx.recoveryFor('no_results'),
+      );
     }
-    const truncated = total > input.limit;
+
+    const nextOffset = input.offset + indicators.length;
+    const hasMore = nextOffset < total;
+
     ctx.enrich.echo(input.query);
     ctx.enrich.total(total);
-    if (truncated) {
+    ctx.enrich({
+      offset: input.offset,
+      hasMore,
+      pageInfo: `offset ${input.offset}, showing ${indicators.length} of ${total}`,
+      ...(hasMore && { nextOffset }),
+    });
+
+    // `notice` is last-wins — compose the applicable segment and write it once.
+    if (pastEnd) {
       ctx.enrich.notice(
-        `Showing ${input.limit} of ${total} matches. Refine the query or increase the limit (max 100) to get more targeted results.`,
+        `Offset ${input.offset} is at or beyond the ${total} indicators matching "${input.query}"; ` +
+          `the last reachable offset is ${total - 1}.`,
+      );
+    } else if (hasMore) {
+      ctx.enrich.notice(
+        `Showing ${indicators.length} of ${total} matches (offset ${input.offset}). ` +
+          `Request offset ${nextOffset} for the next page, raise the limit (max 100), ` +
+          'or refine the query for more targeted results.',
       );
     }
     return { indicators };

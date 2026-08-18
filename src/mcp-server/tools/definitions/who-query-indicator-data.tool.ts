@@ -9,6 +9,27 @@ import { getGhoService } from '@/services/gho/gho-service.js';
 
 const SEX_VALUES = ['SEX_BTSX', 'SEX_FMLE', 'SEX_MLE'] as const;
 
+/**
+ * Per sort mode: the OData `$orderby` clause sent upstream, the `label` echoed back in
+ * the applied-filters enrichment, and how the returned `slice` is named in the truncation
+ * notice. Every clause terminates in `Id` — a unique row key — so the ordering is total:
+ * without it, rows sharing (TimeDim, SpatialDim, Dim1) but differing in Dim2/Dim3 form a
+ * tie group the upstream may order freely, which would let offset paging repeat rows on
+ * one page and omit them from another.
+ */
+const SORT_MODES = {
+  year_desc: {
+    orderBy: 'TimeDim desc,SpatialDim,Dim1,Id',
+    label: 'most recent first (year_desc)',
+    slice: 'most recent',
+  },
+  year_asc: {
+    orderBy: 'TimeDim asc,SpatialDim,Dim1,Id',
+    label: 'earliest first (year_asc)',
+    slice: 'earliest',
+  },
+} as const;
+
 export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   title: 'Query WHO GHO Indicator Data',
   description:
@@ -21,7 +42,9 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     'or income_group_codes — mixing them triggers an error. ' +
     'Omitting all spatial filters returns all geographies (may be large; use limit to cap). ' +
     'The sex filter only applies when the indicator uses SEX as its first cross-cutting dimension — ' +
-    'if not, the filter returns empty rows; check who_get_indicator_metadata first if uncertain.',
+    'if not, the filter returns empty rows; check who_get_indicator_metadata first if uncertain. ' +
+    'Rows are returned in a deterministic order (most recent first by default), so a capped result is ' +
+    'the top of a defined slice rather than an arbitrary sample; page through the rest with offset.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_code: z
@@ -92,6 +115,23 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .max(1000)
       .default(200)
       .describe('Maximum number of data rows to return. Default 200, max 1000.'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe(
+        'Zero-based row offset for pagination. Default 0. Pages are stable because rows are ' +
+          'returned in a deterministic order — read hasMore and nextOffset from the response to ' +
+          'continue. An offset at or beyond totalRows returns an empty rows array, not an error.',
+      ),
+    sort: z
+      .enum(['year_desc', 'year_asc'])
+      .default('year_desc')
+      .describe(
+        'Row ordering: "year_desc" (default) returns the most recent years first, "year_asc" the ' +
+          'earliest first. Ties are broken by spatial code, then dimension, then row id.',
+      ),
   }),
   output: z.object({
     rows: z
@@ -178,6 +218,9 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           .describe('Applied year range, e.g. "2015–2023". Absent when no year filter was set.'),
         sex: z.string().optional().describe('Sex filter value applied, if any.'),
         dim1Value: z.string().optional().describe('dim1_value filter applied, if any.'),
+        ordering: z
+          .string()
+          .describe('Row ordering applied to the query, e.g. "most recent first (year_desc)".'),
       })
       .describe('Filters that were applied to the query.'),
     totalRows: z
@@ -190,11 +233,26 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .boolean()
       .optional()
       .describe('True when the result was capped at the requested limit.'),
+    offset: z.number().describe('Zero-based row offset this page started at.'),
+    hasMore: z
+      .boolean()
+      .describe('True when rows remain beyond this page. Pair with nextOffset to continue.'),
+    pageInfo: z
+      .string()
+      .describe(
+        'Human-readable page position, e.g. "offset 0, showing 200 of 12936". Use to construct the next offset.',
+      ),
+    nextOffset: z
+      .number()
+      .optional()
+      .describe(
+        'Offset to request for the next page. Absent when this page reached the end of the result set.',
+      ),
     notice: z
       .string()
       .optional()
       .describe(
-        'Present when the limit was reached and not all rows were returned. Explains how to retrieve additional rows.',
+        'Present when rows were withheld or the requested offset ran past the end of the result set. Explains how to reach the remaining rows.',
       ),
   },
 
@@ -206,6 +264,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         if (filters.yearRange) parts.push(`- **Years:** ${filters.yearRange}`);
         if (filters.sex) parts.push(`- **Sex:** ${filters.sex}`);
         if (filters.dim1Value) parts.push(`- **Dim1:** ${filters.dim1Value}`);
+        parts.push(`- **Ordering:** ${filters.ordering}`);
         return `**Applied Filters:**\n${parts.join('\n')}`;
       },
     },
@@ -233,6 +292,20 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       recovery:
         'Provide only one spatial filter type per call. To compare countries and regions, make separate calls.',
     },
+    {
+      reason: 'invalid_year_range',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'year_from is greater than year_to, so the time filter can match no rows.',
+      recovery:
+        'Set year_from less than or equal to year_to, or drop one bound to leave the range open.',
+    },
+    {
+      reason: 'invalid_query',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'The GHO API rejected the generated OData query because a supplied filter value is not a valid literal.',
+      recovery:
+        'Check the spatial codes and dim1_value for stray quotes or punctuation, then confirm valid codes with who_list_dimension_values and retry.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -244,7 +317,15 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       throw ctx.fail(
         'ambiguous_spatial_filter',
         'Provide only one of country_codes, region_codes, or income_group_codes per call.',
-        { ...ctx.recoveryFor('ambiguous_spatial_filter') },
+        ctx.recoveryFor('ambiguous_spatial_filter'),
+      );
+    }
+
+    if (input.year_from != null && input.year_to != null && input.year_from > input.year_to) {
+      throw ctx.fail(
+        'invalid_year_range',
+        `year_from (${input.year_from}) is after year_to (${input.year_to}), so the time filter matches no rows.`,
+        ctx.recoveryFor('invalid_year_range'),
       );
     }
 
@@ -255,10 +336,13 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       yearTo: input.year_to,
     });
 
+    const sortMode = SORT_MODES[input.sort];
     const queryParams = {
       indicatorCode: input.indicator_code,
       includeUncertainty: input.include_uncertainty,
       limit: input.limit,
+      offset: input.offset,
+      orderBy: sortMode.orderBy,
       ...(input.country_codes?.length && { countryCodes: input.country_codes }),
       ...(input.region_codes?.length && { regionCodes: input.region_codes }),
       ...(input.income_group_codes?.length && { incomeGroupCodes: input.income_group_codes }),
@@ -273,9 +357,15 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         // Re-fail 404s with the typed contract reason so the recovery hint reaches the client.
         // Checking data.reason rather than err.code avoids referencing NotFound in handler
         // source (which the linter flags as a direct throw bypassing ctx.fail).
-        if (
-          (err as { data?: { reason?: string } } | null)?.data?.reason === 'indicator_not_found'
-        ) {
+        const reason = (err as { data?: { reason?: string } } | null)?.data?.reason;
+        if (reason === 'invalid_query') {
+          throw ctx.fail(
+            'invalid_query',
+            'The GHO API rejected the generated query — a supplied filter value is not a valid OData literal.',
+            { indicatorCode: input.indicator_code, ...ctx.recoveryFor('invalid_query') },
+          );
+        }
+        if (reason === 'indicator_not_found') {
           throw ctx.fail(
             'indicator_not_found',
             `Indicator code "${input.indicator_code}" not found in the GHO catalog.`,
@@ -285,7 +375,11 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         throw err;
       });
 
-    if (rows.length === 0) {
+    // An empty page has two distinct causes once offset exists. Only one of them is
+    // "the filters matched nothing"; paging past the end matched totalRows rows and
+    // simply asked for a slice beyond them, so it returns an empty page, not an error.
+    const pastEnd = totalRows > 0 && input.offset >= totalRows;
+    if (rows.length === 0 && !pastEnd) {
       throw ctx.fail(
         'no_data',
         `Indicator "${input.indicator_code}" returned no data for the applied filters.`,
@@ -311,6 +405,8 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
             ? `to ${input.year_to}`
             : undefined;
 
+    const nextOffset = input.offset + rows.length;
+
     ctx.enrich({
       appliedFilters: {
         indicatorCode: input.indicator_code,
@@ -318,14 +414,33 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         ...(yearRange && { yearRange }),
         ...(input.sex && { sex: input.sex }),
         ...(input.dim1_value && { dim1Value: input.dim1_value }),
+        ordering: sortMode.label,
       },
       totalRows,
       totalCount: totalRows,
+      offset: input.offset,
+      hasMore: truncated,
+      pageInfo: `offset ${input.offset}, showing ${rows.length} of ${totalRows}`,
+      ...(truncated && { nextOffset }),
     });
+
+    // `notice` is last-wins, and enrich.truncated() writes it too — the two cases are
+    // mutually exclusive (paging past the end leaves nothing to truncate), so exactly
+    // one of these writes it per return path.
     if (truncated) {
-      ctx.enrich.truncated({ shown: input.limit, cap: input.limit, ceiling: 1000 });
+      ctx.enrich.truncated({
+        shown: rows.length,
+        cap: input.limit,
+        ceiling: 1000,
+        guidance:
+          `Showing the ${sortMode.slice} ${rows.length} of ${totalRows} rows (offset ${input.offset}). ` +
+          `Request offset ${nextOffset} for the next page, raise the limit (max 1000), ` +
+          'or narrow the filters (year range, spatial codes).',
+      });
+    } else if (pastEnd) {
       ctx.enrich.notice(
-        `Showing ${input.limit} of ${totalRows} rows. Narrow the filters (year range, spatial codes) or increase the limit (max 1000) to retrieve more.`,
+        `Offset ${input.offset} is at or beyond the ${totalRows} rows matching these filters; ` +
+          `the last reachable offset is ${totalRows - 1}.`,
       );
     }
 

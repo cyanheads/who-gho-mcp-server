@@ -5,9 +5,9 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { httpErrorFromResponse, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
 import type {
   DataQueryParams,
@@ -49,6 +49,9 @@ export class GhoService {
           $top: String(params.limit),
           $skip: String(params.offset),
           $count: 'true',
+          // Offset paging is only sound over a guaranteed order; the catalog's
+          // unique key pins it by contract rather than by observed upstream behavior.
+          $orderby: 'IndicatorCode',
         });
         if (params.indicatorCode) {
           // Exact match by code — codes are not substrings of names, so contains() fails here.
@@ -66,7 +69,7 @@ export class GhoService {
           total: data['@odata.count'] ?? data.value.length,
         };
       },
-      { operation: 'GhoService.listIndicators', signal: ctx.signal },
+      { context: ctx, operation: 'GhoService.listIndicators', signal: ctx.signal },
     );
   }
 
@@ -78,7 +81,7 @@ export class GhoService {
         const data = await this.getJson<ODataEnvelope<RawDimension>>(url, ctx);
         return data.value.map((d) => ({ code: d.Code, title: d.Title }));
       },
-      { operation: 'GhoService.listDimensions', signal: ctx.signal },
+      { context: ctx, operation: 'GhoService.listDimensions', signal: ctx.signal },
     );
   }
 
@@ -96,7 +99,7 @@ export class GhoService {
           ...(v.ParentDimension && { parentDimension: v.ParentDimension }),
         }));
       },
-      { operation: 'GhoService.listDimensionValues', signal: ctx.signal },
+      { context: ctx, operation: 'GhoService.listDimensionValues', signal: ctx.signal },
     );
   }
 
@@ -122,6 +125,7 @@ export class GhoService {
               .map((d) => ({ dimension: d.Dimension, dimensionName: d.DimensionName }));
           },
           {
+            context: ctx,
             operation: `GhoService.getIndicatorDimensions(${code})`,
             signal: ctx.signal,
           },
@@ -189,8 +193,10 @@ export class GhoService {
 
         const qs = new URLSearchParams({
           $top: String(params.limit),
+          $skip: String(params.offset),
           $count: 'true',
           $select: selectFields.join(','),
+          $orderby: params.orderBy,
         });
         if (filterParts.length > 0) {
           qs.set('$filter', filterParts.join(' and '));
@@ -207,34 +213,27 @@ export class GhoService {
           });
         }
 
-        const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
-          throw serviceUnavailable(
-            'GHO API returned HTML instead of JSON — possibly rate-limited or temporarily unavailable.',
-          );
-        }
-
-        let data: ODataEnvelope<RawDataRow>;
-        try {
-          data = JSON.parse(text) as ODataEnvelope<RawDataRow>;
-        } catch {
-          throw serviceUnavailable('GHO API returned unparseable response.');
-        }
+        const data = await this.parseJsonBody<ODataEnvelope<RawDataRow>>(response);
 
         // GHO API returns {"error": {...}} when the OData query is rejected (e.g. malformed filter).
         if ('error' in data) {
           const oErr = (data as { error: { message?: string } }).error;
+          ctx.log.warning('GHO API rejected the OData query', { url });
           throw serviceUnavailable(oErr.message ?? 'GHO API returned an OData error response.', {
-            url,
+            reason: 'invalid_query',
+            // A rejected query is deterministic — withRetry's defaultIsTransient honors
+            // this flag ahead of the code lookup, so it fails on the first attempt
+            // instead of burning the full ServiceUnavailable retry budget.
+            retryable: false,
           });
         }
 
         const totalRows = data['@odata.count'] ?? data.value.length;
         const rows = data.value.map((r) => this.normalizeRow(r, params.includeUncertainty));
 
-        return { rows, totalRows, truncated: totalRows > params.limit };
+        return { rows, totalRows, truncated: params.offset + rows.length < totalRows };
       },
-      { operation: 'GhoService.queryData', signal: ctx.signal },
+      { context: ctx, operation: 'GhoService.queryData', signal: ctx.signal },
     );
   }
 
@@ -270,9 +269,13 @@ export class GhoService {
       return await fetch(url, { signal: controller.signal });
     } catch (err: unknown) {
       if (ctx.signal.aborted) {
-        throw serviceUnavailable('Request cancelled.', { url });
+        ctx.log.debug('GHO API request cancelled', { url });
+        throw serviceUnavailable('Request cancelled.');
       }
-      throw serviceUnavailable(`Network error fetching ${url}`, { url }, { cause: err });
+      ctx.log.warning('Network error contacting the GHO API', { url });
+      throw serviceUnavailable('Network error contacting the GHO API.', undefined, {
+        cause: err,
+      });
     } finally {
       clearTimeout(timeoutId);
       ctx.signal.removeEventListener('abort', onAbort);
@@ -283,8 +286,28 @@ export class GhoService {
   private async getJson<T>(url: string, ctx: Context): Promise<T> {
     const response = await this.fetchRaw(url, ctx);
     if (!response.ok) {
-      throw serviceUnavailable(`GHO API returned HTTP ${response.status} for ${url}.`);
+      ctx.log.warning('GHO API returned a non-2xx status', { url, status: response.status });
+      throw await httpErrorFromResponse(response, {
+        service: 'GHO API',
+        captureBody: false,
+        // The default mapping sends 500/501 to InternalError, which is not transient —
+        // adopting it verbatim would silently stop retrying those. Keep the whole 5xx
+        // range retryable and let 4xx fall through to the fail-fast default mapping.
+        codeOverride: (status) => (status >= 500 ? JsonRpcErrorCode.ServiceUnavailable : undefined),
+        // httpErrorFromResponse seeds data.url from response.url; extraData spreads last,
+        // so this suppresses it rather than relocating the leak from the message.
+        data: { url: undefined },
+      });
     }
+    return this.parseJsonBody<T>(response);
+  }
+
+  /**
+   * Internal: read a response body as JSON. The upstream serves an HTML error page
+   * under some failure modes, so sniff for that first — otherwise it surfaces as a
+   * JSON syntax error rather than as the service being unavailable.
+   */
+  private async parseJsonBody<T>(response: Response): Promise<T> {
     const text = await response.text();
     if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
       throw serviceUnavailable(

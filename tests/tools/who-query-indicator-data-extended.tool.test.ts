@@ -4,6 +4,7 @@
  * @module tests/tools/who-query-indicator-data-extended.tool.test
  */
 
+import type { Context } from '@cyanheads/mcp-ts-core';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoQueryIndicatorData } from '@/mcp-server/tools/definitions/who-query-indicator-data.tool.js';
@@ -14,6 +15,22 @@ const mockService = {
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);
+
+/**
+ * `getEnrichment` returns an untyped record; narrow its `appliedFilters` entry to
+ * the shape the tool's enrichment schema declares so assertions stay typed.
+ */
+type AppliedFilters = {
+  indicatorCode: string;
+  spatialFilter?: string;
+  yearRange?: string;
+  sex?: string;
+  dim1Value?: string;
+  ordering: string;
+};
+
+const appliedFilters = (ctx: Context): AppliedFilters =>
+  getEnrichment(ctx).appliedFilters as AppliedFilters;
 
 const minimalRow = {
   indicatorCode: 'WHOSIS_000001',
@@ -72,6 +89,32 @@ describe('whoQueryIndicatorData — input validation', () => {
     }
   });
 
+  it('rejects a negative offset (min 0)', () => {
+    expect(() =>
+      whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', offset: -1 }),
+    ).toThrow();
+  });
+
+  it('rejects a non-integer offset', () => {
+    expect(() =>
+      whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', offset: 1.5 }),
+    ).toThrow();
+  });
+
+  it('accepts offset 0 and applies it as the default', () => {
+    expect(() =>
+      whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', offset: 0 }),
+    ).not.toThrow();
+    expect(whoQueryIndicatorData.input.parse({ indicator_code: 'CODE' }).offset).toBe(0);
+  });
+
+  it('rejects an unknown sort mode and defaults to year_desc', () => {
+    expect(() =>
+      whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', sort: 'value_desc' }),
+    ).toThrow();
+    expect(whoQueryIndicatorData.input.parse({ indicator_code: 'CODE' }).sort).toBe('year_desc');
+  });
+
   it('accepts non-integer year_from and year_to (int validated at Zod)', () => {
     // year_from/year_to must be integers per schema
     expect(() =>
@@ -124,9 +167,9 @@ describe('whoQueryIndicatorData — spatial filter combinations', () => {
     const result = await whoQueryIndicatorData.handler(input, ctx);
     expect(result.rows).toHaveLength(1);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.spatialFilter).toContain('income_group_codes');
-    expect(enrichment.appliedFilters.spatialFilter).toContain('WB_HI');
+    const filters = appliedFilters(ctx);
+    expect(filters.spatialFilter).toContain('income_group_codes');
+    expect(filters.spatialFilter).toContain('WB_HI');
   });
 
   it('accepts region_codes alone as spatial filter', async () => {
@@ -143,9 +186,9 @@ describe('whoQueryIndicatorData — spatial filter combinations', () => {
     const result = await whoQueryIndicatorData.handler(input, ctx);
     expect(result.rows).toHaveLength(1);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.spatialFilter).toContain('region_codes');
-    expect(enrichment.appliedFilters.spatialFilter).toContain('EUR');
+    const filters = appliedFilters(ctx);
+    expect(filters.spatialFilter).toContain('region_codes');
+    expect(filters.spatialFilter).toContain('EUR');
   });
 
   it('accepts no spatial filter (all geographies)', async () => {
@@ -159,8 +202,8 @@ describe('whoQueryIndicatorData — spatial filter combinations', () => {
     const result = await whoQueryIndicatorData.handler(input, ctx);
     expect(result.rows).toHaveLength(1);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.spatialFilter).toBeUndefined();
+    const filters = appliedFilters(ctx);
+    expect(filters.spatialFilter).toBeUndefined();
   });
 });
 
@@ -178,8 +221,8 @@ describe('whoQueryIndicatorData — year range edge cases', () => {
     });
     await whoQueryIndicatorData.handler(input, ctx);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.yearRange).toBe('from 2015');
+    const filters = appliedFilters(ctx);
+    expect(filters.yearRange).toBe('from 2015');
   });
 
   it('produces yearRange with only year_to', async () => {
@@ -191,8 +234,8 @@ describe('whoQueryIndicatorData — year range edge cases', () => {
     });
     await whoQueryIndicatorData.handler(input, ctx);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.yearRange).toBe('to 2023');
+    const filters = appliedFilters(ctx);
+    expect(filters.yearRange).toBe('to 2023');
   });
 
   it('produces yearRange with both year_from and year_to', async () => {
@@ -205,8 +248,8 @@ describe('whoQueryIndicatorData — year range edge cases', () => {
     });
     await whoQueryIndicatorData.handler(input, ctx);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.yearRange).toBe('2010–2020');
+    const filters = appliedFilters(ctx);
+    expect(filters.yearRange).toBe('2010–2020');
   });
 
   it('yearRange is absent when no year filters applied', async () => {
@@ -215,8 +258,8 @@ describe('whoQueryIndicatorData — year range edge cases', () => {
     const input = whoQueryIndicatorData.input.parse({ indicator_code: 'WHOSIS_000001' });
     await whoQueryIndicatorData.handler(input, ctx);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.yearRange).toBeUndefined();
+    const filters = appliedFilters(ctx);
+    expect(filters.yearRange).toBeUndefined();
   });
 });
 
@@ -234,8 +277,8 @@ describe('whoQueryIndicatorData — dim1_value and include_uncertainty', () => {
     });
     await whoQueryIndicatorData.handler(input, ctx);
 
-    const enrichment = getEnrichment(ctx);
-    expect(enrichment.appliedFilters.dim1Value).toBe('YEARS05-14');
+    const filters = appliedFilters(ctx);
+    expect(filters.dim1Value).toBe('YEARS05-14');
   });
 
   it('does not crash when include_uncertainty=false', async () => {
