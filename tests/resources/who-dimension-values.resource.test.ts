@@ -26,7 +26,7 @@ describe('whoDimensionValuesResource', () => {
       { code: 'SEX_MLE', label: 'Male' },
     ]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'SEX' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'SEX' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
     expect(result.dimension).toBe('SEX');
     expect(result.values).toHaveLength(3);
@@ -36,7 +36,7 @@ describe('whoDimensionValuesResource', () => {
   it('throws not found for unknown dimension code', async () => {
     mockService.listDimensionValues.mockResolvedValue([]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'NOTEXIST' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'NOTEXIST' });
     await expect(whoDimensionValuesResource.handler(params, ctx)).rejects.toThrow(
       /not exist|not found/i,
     );
@@ -45,7 +45,7 @@ describe('whoDimensionValuesResource', () => {
   it('returns sparse values without parent fields', async () => {
     mockService.listDimensionValues.mockResolvedValue([{ code: 'AFR', label: 'African Region' }]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'REGION' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'REGION' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
     expect(result.values[0]).toMatchObject({ code: 'AFR', label: 'African Region' });
     expect(result.values[0]?.parentCode).toBeUndefined();

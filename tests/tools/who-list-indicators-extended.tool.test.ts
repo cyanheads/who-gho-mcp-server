@@ -109,7 +109,7 @@ describe('whoListIndicators — edge cases', () => {
   it('formats empty result without crashing', () => {
     const output = { indicators: [] };
     const blocks = whoListIndicators.format!(output);
-    expect(blocks[0].type).toBe('text');
+    expect(blocks[0]?.type).toBe('text');
     const text = (blocks[0] as { type: 'text'; text: string }).text;
     expect(text).toContain('0');
   });

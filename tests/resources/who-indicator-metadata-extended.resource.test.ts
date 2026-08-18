@@ -25,7 +25,7 @@ describe('whoIndicatorMetadataResource — edge cases', () => {
     mockService.getIndicatorDimensions.mockRejectedValue(new Error('GHO API timeout'));
     mockService.listIndicators.mockResolvedValue({ indicators: [], total: 0 });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({
+    const params = whoIndicatorMetadataResource.params!.parse({
       indicatorCode: 'WHOSIS_000001',
     });
     await expect(whoIndicatorMetadataResource.handler(params, ctx)).rejects.toThrow(
@@ -53,7 +53,7 @@ describe('whoIndicatorMetadataResource — edge cases', () => {
       total: 1,
     });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({
+    const params = whoIndicatorMetadataResource.params!.parse({
       indicatorCode: 'WHOSIS_000001',
     });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
@@ -70,7 +70,7 @@ describe('whoIndicatorMetadataResource — edge cases', () => {
       total: 1,
     });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: 'MY_CODE' });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'MY_CODE' });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
     expect(result.indicatorCode).toBe('MY_CODE');
   });
@@ -81,7 +81,7 @@ describe('whoIndicatorMetadataResource — edge cases', () => {
     );
     mockService.listIndicators.mockResolvedValue({ indicators: [], total: 0 });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: 'MYSTERY' });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'MYSTERY' });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
     expect(result.indicatorName).toBe('MYSTERY');
   });
@@ -96,7 +96,7 @@ describe('whoIndicatorMetadataResource — security', () => {
     mockService.getIndicatorDimensions.mockResolvedValue(new Map());
     mockService.listIndicators.mockResolvedValue({ indicators: [], total: 0 });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: 'NOTEXIST' });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'NOTEXIST' });
     let caughtError: unknown;
     try {
       await whoIndicatorMetadataResource.handler(params, ctx);
@@ -115,7 +115,7 @@ describe('whoIndicatorMetadataResource — security', () => {
     );
     mockService.listIndicators.mockResolvedValue({ indicators: [], total: 0 });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: injectionCode });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: injectionCode });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
     // Handler echoes the code as indicatorCode and indicatorName — no additional values injected
     expect(result.indicatorCode).toBe(injectionCode);
@@ -135,7 +135,7 @@ describe('whoIndicatorMetadataResource — security', () => {
       total: 1,
     });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: unicodeCode });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: unicodeCode });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
     expect(result.indicatorCode).toBe(unicodeCode);
     expect(result.indicatorName).toBe('Indicateur de santé 2024');

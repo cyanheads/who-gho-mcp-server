@@ -2,8 +2,8 @@
 
 **Server:** @cyanheads/who-gho-mcp-server
 **Version:** 0.1.14
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.10.9`
-**Engines:** Bun ≥1.3.2, Node ≥24.0.0
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.11.5`
+**Engines:** Bun ≥1.3.0, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
@@ -89,7 +89,7 @@ export const itemData = resource('inventory://{itemId}', {
   params: z.object({ itemId: z.string().describe('Item identifier') }),
   auth: ['inventory:read'],
   async handler(params, ctx) {
-    const item = await ctx.state.get(`item:${params.itemId}`);
+    const item = await ctx.state.get(`item/${params.itemId}`);
     if (!item) throw notFound(`Item ${params.itemId} not found`, { itemId: params.itemId });
     return item;
   },
@@ -162,12 +162,14 @@ Handlers receive a unified `ctx` object. Key properties:
 | Property | Description |
 |:---------|:------------|
 | `ctx.log` | Request-scoped logger — `.debug()`, `.info()`, `.notice()`, `.warning()`, `.error()`. Auto-correlates requestId, traceId, tenantId. |
-| `ctx.state` | Tenant-scoped KV — `.get(key)`, `.set(key, value, { ttl? })`, `.delete(key)`, `.list(prefix, { cursor, limit })`. Accepts any serializable value. |
+| `ctx.state` | Tenant-scoped KV — `.get(key)`, `.set(key, value, { ttl? })`, `.delete(key)`, `.getMany(keys)`, `.list(prefix, { cursor, limit })`. Accepts any serializable value. |
 | `ctx.elicit` | Ask user for structured input — form call `(message, schema)` or `.url(message, url)` for an external link. **Check for presence first:** `if (ctx.elicit) { ... }` |
+| `ctx.enrich` | Success-path agent context (empty-result notices, query echo, pagination totals) — `ctx.enrich(...)` or `.notice()` / `.total()` / `.echo()` / `.truncated()`. Reaches `structuredContent` and `content[]`; lands only when the definition declares an `enrichment` block (no-op otherwise). |
+| `ctx.content` | Non-text content blocks — `.image(data, mimeType)`, `.audio(data, mimeType)`, or `ctx.content(block)` for a raw block. Prepended to `content[]` after `format()`; never enters `structuredContent`. |
 | `ctx.signal` | `AbortSignal` for cancellation. |
 | `ctx.progress` | Task progress (present when `task: true`) — `.setTotal(n)`, `.increment()`, `.update(message)`. |
 | `ctx.requestId` | Unique request ID. |
-| `ctx.tenantId` | Tenant ID from JWT or `'default'` for stdio. |
+| `ctx.tenantId` | Tenant ID from JWT; `'default'` for stdio or HTTP with auth off. |
 
 ---
 
@@ -175,7 +177,7 @@ Handlers receive a unified `ctx` object. Key properties:
 
 Handlers throw — the framework catches, classifies, and formats.
 
-**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, recovery, retryable? }]` on `tool()` / `resource()` to receive `ctx.fail(reason, …)` typed against the reason union. TypeScript catches typos at compile time, `data.reason` is auto-populated for observability, linter enforces conformance against the handler body. `recovery` is required descriptive metadata for the agent's next move (≥ 5 words, lint-validated); for the wire `data.recovery.hint` (mirrored into `content[]` text), pass explicitly at the throw site when dynamic context matters: `ctx.fail('reason', msg, { recovery: { hint: '...' } })`. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`) bubble freely and don't need declaring.
+**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, recovery, retryable? }]` on `tool()` / `resource()` to receive `ctx.fail(reason, …)` typed against the reason union. TypeScript catches typos at compile time, `data.reason` is auto-populated for observability, linter enforces conformance against the handler body. `recovery` is required (≥ 5 words, lint-validated) — the single source of truth for the agent's next move. Pass `ctx.recoveryFor('reason')` as the throw's data to put it on the wire (`data.recovery.hint`, mirrored into `content[]` text); override with an explicit `{ recovery: { hint: '...' } }` when dynamic runtime context matters. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`) bubble freely and don't need declaring.
 
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
@@ -187,7 +189,7 @@ errors: [
 ],
 async handler(input, ctx) {
   const item = await db.find(input.id);
-  if (!item) throw ctx.fail('no_match', `No item ${input.id}`);
+  if (!item) throw ctx.fail('no_match', `No item ${input.id}`, ctx.recoveryFor('no_match'));
   return item;
 }
 ```
@@ -250,7 +252,7 @@ src/
 
 ## Skills
 
-Skills are modular instructions in `skills/` at the project root. Read them directly when a task matches — e.g., `skills/add-tool/SKILL.md` when adding a tool.
+Skills are modular instructions in `skills/` at the project root. Read them directly when a task matches — e.g., `skills/add-tool/SKILL.md` when adding a tool. `bun run list-skills` prints the full registry.
 
 **Agent skill directory:** Copy skills into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). Skills then load as context without referencing `skills/` paths. After framework updates, run the `maintenance` skill — Phase B re-syncs the agent directory.
 
@@ -283,13 +285,16 @@ Available skills:
 | `api-context` | Context interface, logger, state, progress |
 | `api-errors` | McpError, JsonRpcErrorCode, error patterns |
 | `api-linter` | Definition linter rule catalog — invoked by `bun run lint:mcp` and `devcheck` |
-| `api-mirror` | MirrorService: persistent embedded-SQLite mirror of a bulk upstream dataset (FTS5, sync state machine, Bun/Node) |
+| `api-mirror` | MirrorService: persistent self-refreshing local mirror (embedded SQLite + FTS5) of a bulk upstream dataset — Tier 3 opt-in |
 | `api-services` | LLM, Speech, Graph services |
 | `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
 | `api-testing` | createMockContext, test patterns |
 | `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
 | `api-workers` | Cloudflare Workers runtime |
-| `orchestrations` | Multi-phase pipeline workflows for fleet-scale operations across N servers |
+| `orchestrations` | Chain task skills into a gated multi-phase pipeline — build-out, QA-fix, update-ship — when you can spawn sub-agents |
+| `techniques` | Catalog of response/data-shaping techniques — overflow handling, payload shaping, retrieval patterns |
+
+**Chaining skills into pipelines.** When the user wants a multi-phase effort — build this server out, QA-and-fix the surface, update-and-ship — *and you can spawn sub-agents*, `skills/orchestrations/SKILL.md` sequences the task skills above into a gated pipeline with verification at each step. Read it to drive the run. Optional: skip it if you can't orchestrate sub-agents, and ignore it entirely if you were *spawned* as one — you've already been scoped to a single phase.
 
 When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
 
@@ -305,12 +310,15 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run devcheck` | Lint + format + typecheck + security + packaging alignment |
 | `bun run audit:refresh` | Delete `bun.lock`, reinstall, and re-run `bun audit`. Use when `devcheck` flags a transitive advisory — `bun update` is sticky on transitive resolutions, so the advisory may be a stale-lockfile false positive. If it survives the refresh, it's real. |
 | `bun run tree` | Generate directory structure doc |
-| `bun run format` | Auto-fix formatting |
-| `bun run test` | Run tests |
+| `bun run format` | Auto-fix formatting (safe fixes only) |
+| `bun run format:unsafe` | Also apply Biome's unsafe autofixes — review the diff; they can change behavior |
+| `bun run test` | Run tests (Vitest — use `bun run test`, not `bun test`) |
 | `bun run lint:mcp` | Validate MCP definitions against spec |
 | `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
 | `bun run list-skills` | List skills in `skills/` with name + description |
 | `bun run bundle` | Build and pack as `dist/who-gho-mcp-server.mcpb` for one-click Claude Desktop install |
+| `bun run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |
+| `bun run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
 | `bun run release:github` | Create or repair the GitHub Release for the current version tag |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |

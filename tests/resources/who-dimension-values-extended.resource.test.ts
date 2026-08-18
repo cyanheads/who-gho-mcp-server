@@ -23,7 +23,7 @@ describe('whoDimensionValuesResource — edge cases', () => {
   it('propagates service rejection as thrown error', async () => {
     mockService.listDimensionValues.mockRejectedValue(new Error('GHO API timeout'));
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'COUNTRY' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'COUNTRY' });
     await expect(whoDimensionValuesResource.handler(params, ctx)).rejects.toThrow(
       'GHO API timeout',
     );
@@ -32,7 +32,7 @@ describe('whoDimensionValuesResource — edge cases', () => {
   it('echoes dimensionCode into result.dimension field', async () => {
     mockService.listDimensionValues.mockResolvedValue([{ code: 'SEX_BTSX', label: 'Both sexes' }]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'SEX' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'SEX' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
     expect(result.dimension).toBe('SEX');
   });
@@ -48,7 +48,7 @@ describe('whoDimensionValuesResource — edge cases', () => {
       },
     ]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'COUNTRY' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'COUNTRY' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
     expect(result.values[0]).toMatchObject({
       code: 'JPN',
@@ -68,7 +68,7 @@ describe('whoDimensionValuesResource — security', () => {
   it('does not leak env vars or secrets in not-found error', async () => {
     mockService.listDimensionValues.mockResolvedValue([]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'NOTEXIST' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'NOTEXIST' });
     let caughtError: unknown;
     try {
       await whoDimensionValuesResource.handler(params, ctx);
@@ -84,7 +84,7 @@ describe('whoDimensionValuesResource — security', () => {
     const injectionCode = "'; DROP TABLE dim; --";
     mockService.listDimensionValues.mockResolvedValue([{ code: 'SAFE', label: 'Safe Value' }]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: injectionCode });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: injectionCode });
     const result = await whoDimensionValuesResource.handler(params, ctx);
     for (const v of result.values) {
       expect(v.code).not.toContain('DROP TABLE');
@@ -94,7 +94,7 @@ describe('whoDimensionValuesResource — security', () => {
   it('handles unicode dimensionCode without throwing', async () => {
     mockService.listDimensionValues.mockResolvedValue([{ code: 'AFR', label: 'Région africaine' }]);
     const ctx = createMockContext();
-    const params = whoDimensionValuesResource.params.parse({ dimensionCode: 'RÉGION' });
+    const params = whoDimensionValuesResource.params!.parse({ dimensionCode: 'RÉGION' });
     const result = await whoDimensionValuesResource.handler(params, ctx);
     expect(result.values).toHaveLength(1);
   });

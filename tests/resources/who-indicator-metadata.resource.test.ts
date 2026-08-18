@@ -39,7 +39,7 @@ describe('whoIndicatorMetadataResource', () => {
       total: 1,
     });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: 'WHOSIS_000001' });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'WHOSIS_000001' });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
     expect(result).toMatchObject({
       indicatorCode: 'WHOSIS_000001',
@@ -51,7 +51,7 @@ describe('whoIndicatorMetadataResource', () => {
   it('throws not found for unknown indicator code', async () => {
     mockService.getIndicatorDimensions.mockResolvedValue(new Map());
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: 'NOTEXIST' });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'NOTEXIST' });
     await expect(whoIndicatorMetadataResource.handler(params, ctx)).rejects.toThrow(
       /not exist|not found/i,
     );
@@ -63,7 +63,7 @@ describe('whoIndicatorMetadataResource', () => {
     );
     mockService.listIndicators.mockResolvedValue({ indicators: [], total: 0 });
     const ctx = createMockContext();
-    const params = whoIndicatorMetadataResource.params.parse({ indicatorCode: 'CODE_X' });
+    const params = whoIndicatorMetadataResource.params!.parse({ indicatorCode: 'CODE_X' });
     const result = await whoIndicatorMetadataResource.handler(params, ctx);
     expect(result.indicatorName).toBe('CODE_X');
   });
