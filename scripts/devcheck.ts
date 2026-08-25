@@ -308,8 +308,15 @@ function classifyAuditVulns(output: string): { direct: string[]; upstream: strin
     let i = 0;
 
     while (i < lines.length) {
-      // Package header: non-indented, name followed by 2+ spaces then version constraint
-      const pkgMatch = lines[i]?.match(/^([@\w][\w./-]*)\s{2,}(.+)$/);
+      /**
+       * Package header, non-indented, in either shape `bun audit` has emitted:
+       * `pkg  <version constraint>` (2+ spaces) through Bun 1.3, and `pkg@1.2.3`
+       * from Bun 1.4 on. Missing the current shape makes every block invisible,
+       * which reads as "no vulnerabilities" rather than as a parse failure.
+       */
+      const pkgMatch =
+        lines[i]?.match(/^([@\w][\w./-]*)\s{2,}(.+)$/) ??
+        lines[i]?.match(/^(@?[\w][\w./-]*)@([^\s].*)$/);
       if (!pkgMatch) {
         i++;
         continue;
@@ -337,11 +344,12 @@ function classifyAuditVulns(output: string): { direct: string[]; upstream: strin
       // Direct if: the vulnerable package is in our package.json,
       // or any dependency path lacks › (meaning it's not pulled in transitively)
       const pkgName = pkg ?? '';
-      const isDirect = DIRECT_DEPS.has(pkgName) || paths.some((p) => !p.includes('\u203a'));
+      // Bun 1.4 renders the dependency path with an ASCII `>`; earlier versions used `\u203a`.
+      const isDirect = DIRECT_DEPS.has(pkgName) || paths.some((p) => !/[\u203a>]/.test(p));
       if (isDirect) {
         direct.push(`${pkgName} ${versionRange}`);
       } else {
-        const via = paths[0]?.split(/\s*\u203a\s*/)[0] ?? 'unknown';
+        const via = paths[0]?.split(/\s*[\u203a>]\s*/)[0] ?? 'unknown';
         upstream.push(`${pkgName} ${versionRange} (via ${via})`);
       }
     }
