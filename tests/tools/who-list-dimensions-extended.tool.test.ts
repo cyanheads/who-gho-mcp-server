@@ -19,8 +19,8 @@ describe('whoListDimensions — input validation', () => {
     expect(() => whoListDimensions.input.parse({})).not.toThrow();
   });
 
-  it('ignores unknown fields (Zod strips extras)', () => {
-    expect(() => whoListDimensions.input.parse({ unexpected: 'value' })).not.toThrow();
+  it('rejects an unrecognized key by name rather than stripping it', () => {
+    expect(() => whoListDimensions.input.parse({ unexpected: 'value' })).toThrow(/unexpected/);
   });
 });
 

@@ -32,9 +32,11 @@ const upstream = useGhoUpstream({
 
 /** Error envelope of a tool contract run, on both surfaces the clients read. */
 const errorSurfaces = (result: Awaited<ReturnType<typeof runToolContract>>) => ({
-  error: result.structuredContent?.error as
-    | { code?: number; message?: string; data?: Record<string, unknown> }
-    | undefined,
+  error: (
+    result.structuredContent as
+      | { error?: { code?: number; message?: string; data?: Record<string, unknown> } }
+      | undefined
+  )?.error,
   text: (result.content?.[0] as { text?: string } | undefined)?.text ?? '',
 });
 

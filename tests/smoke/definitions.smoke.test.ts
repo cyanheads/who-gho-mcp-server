@@ -7,7 +7,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
-import { createFetchMock } from '@cyanheads/mcp-ts-core/testing';
+import { createFetchMock, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   whoDimensionValuesByParentResource,
@@ -74,6 +74,42 @@ describe('tool definitions', () => {
       expect(() => z.toJSONSchema(definition.output)).not.toThrow();
     },
   );
+
+  it.each(tools.map((t) => [t.name, t] as const))(
+    '%s advertises a closed 2020-12 input schema',
+    (_name, definition) => {
+      // What `tool()` stored, not what the hand-written Zod object converts to:
+      // the builder applies `.strict()`, so the advertised bytes name the closure.
+      const schema = z.toJSONSchema(definition.input) as {
+        $schema?: string;
+        additionalProperties?: boolean;
+      };
+      expect(schema.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+      expect(schema.additionalProperties).toBe(false);
+    },
+  );
+
+  it('rejects an undeclared argument key by name on both surfaces', async () => {
+    // Strict inputs: an unrecognized key is refused before the handler runs rather
+    // than stripped, so a caller's typo surfaces as itself instead of a wrong answer.
+    for (const [definition, input, typo] of [
+      [whoListDimensions, { querry: 'oops' }, 'querry'],
+      [
+        whoQueryIndicatorData,
+        { indicator_code: 'WHOSIS_000001', coutnry_codes: ['JPN'] },
+        'coutnry_codes',
+      ],
+    ] as const) {
+      const result = await runToolContract(definition, input as never);
+      const error = (result.structuredContent as { error?: { message?: string } } | undefined)
+        ?.error;
+      const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? '';
+
+      expect(result.isError).toBe(true);
+      expect(error?.message).toContain(typo);
+      expect(text).toContain(typo);
+    }
+  });
 
   it('parses representative inputs and applies the declared defaults', () => {
     expect(whoListDimensions.input.parse({})).toEqual({});

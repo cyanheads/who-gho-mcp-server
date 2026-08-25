@@ -69,7 +69,9 @@ describe('who_search_indicators echoes the query', () => {
 
     expect(result.isError).toBeFalsy();
     expectWellFormedFrame(result, 'who_search_indicators success frame');
-    expect(result.structuredContent?.effectiveQuery).toBe(`malaria${REPLACEMENT}`);
+    expect((result.structuredContent as { effectiveQuery?: string }).effectiveQuery).toBe(
+      `malaria${REPLACEMENT}`,
+    );
   });
 
   it('repairs an unpaired surrogate in the past-the-end notice', async () => {
@@ -82,7 +84,9 @@ describe('who_search_indicators echoes the query', () => {
 
     expect(result.isError).toBeFalsy();
     expectWellFormedFrame(result, 'who_search_indicators past-the-end frame');
-    expect(result.structuredContent?.notice).toContain(`malaria${REPLACEMENT}`);
+    expect((result.structuredContent as { notice?: string }).notice).toContain(
+      `malaria${REPLACEMENT}`,
+    );
   });
 
   it('repairs an unpaired surrogate in the no_results failure', async () => {
@@ -102,7 +106,9 @@ describe('who_search_indicators echoes the query', () => {
     const result = await runToolContract(whoSearchIndicators, { query: `malaria${ASTRAL}` });
 
     const frame = expectWellFormedFrame(result, 'who_search_indicators astral frame');
-    expect(result.structuredContent?.effectiveQuery).toBe(`malaria${ASTRAL}`);
+    expect((result.structuredContent as { effectiveQuery?: string }).effectiveQuery).toBe(
+      `malaria${ASTRAL}`,
+    );
     expect(frame).toContain(ASTRAL);
   });
 });
@@ -120,7 +126,7 @@ describe('who_get_indicator_metadata echoes the requested codes', () => {
 
     expect(result.isError).toBeFalsy();
     expectWellFormedFrame(result, 'who_get_indicator_metadata partial-match frame');
-    expect(result.structuredContent?.notFound).toEqual([REPLACEMENT]);
+    expect((result.structuredContent as { notFound?: string[] }).notFound).toEqual([REPLACEMENT]);
   });
 
   it('repairs an unpaired surrogate in the all_not_found failure data', async () => {
@@ -144,7 +150,7 @@ describe('who_get_indicator_metadata echoes the requested codes', () => {
       indicator_codes: ['WHOSIS_000001', ASTRAL],
     });
 
-    expect(result.structuredContent?.notFound).toEqual([ASTRAL]);
+    expect((result.structuredContent as { notFound?: string[] }).notFound).toEqual([ASTRAL]);
     expect(expectWellFormedFrame(result, 'who_get_indicator_metadata astral frame')).toContain(
       ASTRAL,
     );
@@ -162,7 +168,7 @@ describe('who_list_dimension_values echoes the parent filter', () => {
 
     expect(result.isError).toBeFalsy();
     expectWellFormedFrame(result, 'who_list_dimension_values parent-filter frame');
-    expect(result.structuredContent?.notice).toContain(REPLACEMENT);
+    expect((result.structuredContent as { notice?: string }).notice).toContain(REPLACEMENT);
   });
 
   it('leaves a paired astral character in the parent filter byte-identical', async () => {
@@ -174,7 +180,7 @@ describe('who_list_dimension_values echoes the parent filter', () => {
     });
 
     const frame = expectWellFormedFrame(result, 'who_list_dimension_values astral frame');
-    expect(result.structuredContent?.notice).toContain(ASTRAL);
+    expect((result.structuredContent as { notice?: string }).notice).toContain(ASTRAL);
     expect(frame).toContain(ASTRAL);
   });
 });
@@ -191,7 +197,8 @@ describe('who_query_indicator_data echoes the applied filters', () => {
     expect(result.isError).toBeFalsy();
     expectWellFormedFrame(result, 'who_query_indicator_data spatial-filter frame');
     expect(
-      (result.structuredContent?.appliedFilters as { spatialFilter?: string })?.spatialFilter,
+      (result.structuredContent as { appliedFilters?: { spatialFilter?: string } }).appliedFilters
+        ?.spatialFilter,
     ).toBe(`country_codes: JPN,${REPLACEMENT}`);
   });
 
@@ -206,9 +213,10 @@ describe('who_query_indicator_data echoes the applied filters', () => {
 
     expect(result.isError).toBeFalsy();
     expectWellFormedFrame(result, 'who_query_indicator_data dim1_value frame');
-    expect((result.structuredContent?.appliedFilters as { dim1Value?: string })?.dim1Value).toBe(
-      REPLACEMENT,
-    );
+    expect(
+      (result.structuredContent as { appliedFilters?: { dim1Value?: string } }).appliedFilters
+        ?.dim1Value,
+    ).toBe(REPLACEMENT);
   });
 
   it('leaves a paired astral character in the spatial filter byte-identical', async () => {
@@ -221,7 +229,8 @@ describe('who_query_indicator_data echoes the applied filters', () => {
 
     const frame = expectWellFormedFrame(result, 'who_query_indicator_data astral frame');
     expect(
-      (result.structuredContent?.appliedFilters as { spatialFilter?: string })?.spatialFilter,
+      (result.structuredContent as { appliedFilters?: { spatialFilter?: string } }).appliedFilters
+        ?.spatialFilter,
     ).toBe(`country_codes: JPN,${ASTRAL}`);
     expect(frame).toContain(ASTRAL);
   });
