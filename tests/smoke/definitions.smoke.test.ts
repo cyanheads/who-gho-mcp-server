@@ -89,9 +89,14 @@ describe('tool definitions', () => {
     },
   );
 
-  it('rejects an undeclared argument key by name on both surfaces', async () => {
+  it('rejects an undeclared argument key by name in the in-process contract envelope', async () => {
     // Strict inputs: an unrecognized key is refused before the handler runs rather
     // than stripped, so a caller's typo surfaces as itself instead of a wrong answer.
+    // `runToolContract` synthesizes a `structuredContent.error` envelope for
+    // in-process assertions; the real wire response (registration-layer schema
+    // rejection, before the framework's error-envelope construction runs) carries
+    // only `isError` + `content[0].text` naming the key, with no `structuredContent`
+    // and no error code.
     for (const [definition, input, typo] of [
       [whoListDimensions, { querry: 'oops' }, 'querry'],
       [

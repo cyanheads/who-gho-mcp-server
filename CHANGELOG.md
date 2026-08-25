@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-08-25
+
+Adopts mcp-ts-core's SDK v2 migration (strict closed 2020-12 input schemas, error-envelope outputSchema, 2026-07-28 protocol support), pins Bun to 1.4.0, sets MCP_SESSION_MODE=stateless in .env.example, and fixes devcheck hard-failing on Bun 1.4's bun audit output shape.
+
 ## [0.3.3](changelog/0.3.x/0.3.3.md) — 2026-08-18
 
 Sanitizes caller strings echoed back into tool and resource responses so an unpaired UTF-16 surrogate no longer breaks the JSON-RPC frame for strict clients.
