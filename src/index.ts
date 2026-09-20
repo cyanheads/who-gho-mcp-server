@@ -22,6 +22,8 @@ import { initGhoService } from './services/gho/gho-service.js';
 await createApp({
   name: 'who-gho-mcp-server',
   title: 'who-gho-mcp-server',
+  // No handler calls ctx.requestInput, so no deployment needs a session. MCP_SESSION_MODE overrides.
+  sessionMode: 'stateless',
   tools: [
     whoListDimensions,
     whoListDimensionValues,
