@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.5](changelog/0.3.x/0.3.5.md) — 2026-09-20
+
+Adopts mcp-ts-core ^0.13.6 — upstream 5xx classification, caller cancellation, and argument rejection all move to the framework's own mapping, and the server declares stateless sessions.
+
 ## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-08-25
 
 Adopts mcp-ts-core's SDK v2 migration (strict closed 2020-12 input schemas, error-envelope outputSchema, 2026-07-28 protocol support), pins Bun to 1.4.0, sets MCP_SESSION_MODE=stateless in .env.example, and fixes devcheck hard-failing on Bun 1.4's bun audit output shape.
