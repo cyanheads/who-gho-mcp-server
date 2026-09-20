@@ -354,12 +354,12 @@ export class GhoService {
       // The body is already consumed on the queryData path, and capturing it would put
       // upstream text on a client-facing surface either way.
       captureBody: false,
-      // No codeOverride and no data.url suppression. The framework's default mapping
-      // already keeps the 5xx range retryable — ServiceUnavailable for the range, Timeout
-      // for 504, both in withRetry's transient set — with 501 opting out in band via
-      // data.retryable, since a method the upstream does not implement answers the same
-      // way every time. response.url stays off client-facing data unless includeUrl is
-      // passed. 4xx keeps the fail-fast default mapping.
+      // Retryability is left to the framework's default status mapping: the 5xx range is
+      // transient — ServiceUnavailable for the range, Timeout for 504, both in withRetry's
+      // transient set — with 501 opting out in band via data.retryable, since a method the
+      // upstream does not implement answers the same way every time. 4xx keeps the
+      // fail-fast mapping, and response.url stays off client-facing data while
+      // includeUrl is unset.
     });
   }
 
