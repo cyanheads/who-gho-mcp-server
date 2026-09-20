@@ -572,10 +572,10 @@ describe('GhoService — retry classification', () => {
       const error = await settle(newService().listDimensions(createMockContext()));
 
       expect(error).toBeDefined();
-      // These are the 4xx codes the fail-fast change must NOT capture: codeOverride
-      // returns undefined below 500 so they reach the framework's transient mapping
-      // (RateLimited / Timeout). Widening codeOverride to the whole 4xx range would
-      // break rate-limit handling while every other test here stayed green.
+      // These are the 4xx codes the fail-fast path must NOT capture: the framework's
+      // status mapping sends them to RateLimited and Timeout, both transient. Widening
+      // fail-fast across the whole 4xx range would break rate-limit handling while
+      // every other test here stayed green.
       expect(http.calls).toHaveLength(4);
     },
   );
@@ -619,7 +619,7 @@ describe('GhoService — retry classification', () => {
     return settle(newService().queryData(baseQueryParams, createMockContext()));
   };
 
-  it.each([500, 501, 502, 503])(
+  it.each([500, 502, 503])(
     'retries HTTP %i from queryData four times and classifies it by status',
     async (status) => {
       const error = await queryStatus(status);
@@ -629,7 +629,22 @@ describe('GhoService — retry classification', () => {
     },
   );
 
-  it.each([429, 408])(
+  it('fails a 501 from queryData on the first attempt — the method is absent upstream', async () => {
+    const error = await queryStatus(501);
+
+    // 501 classifies as ServiceUnavailable like the rest of the 5xx range, so the
+    // in-band data.retryable: false the framework attaches is what keeps it out of
+    // the retry loop: re-asking for a method the upstream does not implement returns
+    // the same answer every time.
+    expect(http.calls).toHaveLength(1);
+    expect(error?.data?.retryable).toBe(false);
+    expect(error?.message).toContain('HTTP 501');
+  });
+
+  // 504 rides here rather than with the 5xx group above: the framework maps it to
+  // Timeout, not ServiceUnavailable. Both are transient, so the retry count is the
+  // same and only the code a client branches on differs.
+  it.each([429, 408, 504])(
     'retries HTTP %i from queryData four times — throttled or timed out is not deterministic',
     async (status) => {
       const error = await queryStatus(status, 'slow down');

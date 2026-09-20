@@ -6,9 +6,9 @@
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import {
-  JsonRpcErrorCode,
   type McpError,
   notFound,
+  requestCancelled,
   serviceUnavailable,
   validationError,
 } from '@cyanheads/mcp-ts-core/errors';
@@ -320,7 +320,9 @@ export class GhoService {
     } catch (err: unknown) {
       if (ctx.signal.aborted) {
         ctx.log.debug('GHO API request cancelled', { url });
-        throw serviceUnavailable('Request cancelled.');
+        // RequestCancelled is outside withRetry's transient set, so a caller that went
+        // away is not retried; ServiceUnavailable would have burned the whole budget.
+        throw requestCancelled('Request cancelled by the caller.');
       }
       ctx.log.warning('Network error contacting the GHO API', { url });
       throw serviceUnavailable('Network error contacting the GHO API.', undefined, {
@@ -352,13 +354,12 @@ export class GhoService {
       // The body is already consumed on the queryData path, and capturing it would put
       // upstream text on a client-facing surface either way.
       captureBody: false,
-      // The default mapping sends 500/501 to InternalError, which is not transient —
-      // adopting it verbatim would silently stop retrying those. Keep the whole 5xx
-      // range retryable and let 4xx fall through to the fail-fast default mapping.
-      codeOverride: (status) => (status >= 500 ? JsonRpcErrorCode.ServiceUnavailable : undefined),
-      // httpErrorFromResponse seeds data.url from response.url; extraData spreads last,
-      // so this suppresses it rather than relocating the leak from the message.
-      data: { url: undefined },
+      // No codeOverride and no data.url suppression. The framework's default mapping
+      // already keeps the 5xx range retryable — ServiceUnavailable for the range, Timeout
+      // for 504, both in withRetry's transient set — with 501 opting out in band via
+      // data.retryable, since a method the upstream does not implement answers the same
+      // way every time. response.url stays off client-facing data unless includeUrl is
+      // passed. 4xx keeps the fail-fast default mapping.
     });
   }
 
