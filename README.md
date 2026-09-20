@@ -47,7 +47,7 @@ WHO Global Health Observatory (GHO) data — 3,059 indicators across 194 member 
 | `who://dimension/{dimensionCode}/values{?limit,offset}` | One explicit page of a dimension type's values |
 | `who://dimension/{dimensionCode}/values{?limit,offset,parentCode}` | One explicit page, narrowed to a parent code |
 
-Both resources mirror data also reachable via `who_get_indicator_metadata` and `who_list_dimension_values` — useful for clients that inject resources as context but don't call tools.
+Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_dimension_values` — useful for clients that inject resources as context but don't call tools.
 
 ## Capability reference
 
