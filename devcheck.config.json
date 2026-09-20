@@ -12,8 +12,9 @@
     "ignorePatterns": []
   },
   "outdated": {
-    "allowlist": ["@cyanheads/mcp-ts-core"]
+    "allowlist": []
   },
+  "lint": {},
   "packaging": {
     "pluginManifests": true
   }
