@@ -149,10 +149,7 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
       throw ctx.fail(
         'all_not_found',
         'None of the requested indicator codes resolved to a GHO catalog entry.',
-        {
-          codes: input.indicator_codes.map(wellFormed),
-          ...ctx.recoveryFor('all_not_found'),
-        },
+        { codes: input.indicator_codes.map(wellFormed) },
       );
     }
 

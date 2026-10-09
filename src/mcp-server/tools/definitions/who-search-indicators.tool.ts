@@ -124,11 +124,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     // matched" is false for it, so it returns an empty page rather than an error.
     const pastEnd = total > 0 && input.offset >= total;
     if (indicators.length === 0 && !pastEnd) {
-      throw ctx.fail(
-        'no_results',
-        `No indicators matched "${echoedQuery}".`,
-        ctx.recoveryFor('no_results'),
-      );
+      throw ctx.fail('no_results', `No indicators matched "${echoedQuery}".`);
     }
 
     const nextOffset = input.offset + indicators.length;

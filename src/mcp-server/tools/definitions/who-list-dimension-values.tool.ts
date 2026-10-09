@@ -161,7 +161,6 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
           throw ctx.fail(
             'malformed_identifier',
             'The dimension value cannot be encoded into a request URL — it contains an unpaired UTF-16 surrogate.',
-            ctx.recoveryFor('malformed_identifier'),
           );
         }
         throw err;
@@ -175,7 +174,6 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       throw ctx.fail(
         'dimension_not_found',
         `Dimension "${echoedDimension}" returned no values — it does not exist in the GHO catalog.`,
-        ctx.recoveryFor('dimension_not_found'),
       );
     }
 

@@ -336,7 +336,6 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       throw ctx.fail(
         'ambiguous_spatial_filter',
         'Provide only one of country_codes, region_codes, or income_group_codes per call.',
-        ctx.recoveryFor('ambiguous_spatial_filter'),
       );
     }
 
@@ -344,7 +343,6 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       throw ctx.fail(
         'invalid_year_range',
         `year_from (${input.year_from}) is after year_to (${input.year_to}), so the time filter matches no rows.`,
-        ctx.recoveryFor('invalid_year_range'),
       );
     }
 
@@ -390,21 +388,20 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           throw ctx.fail(
             'malformed_identifier',
             'The indicator_code value cannot be encoded into a request URL — it contains an unpaired UTF-16 surrogate.',
-            ctx.recoveryFor('malformed_identifier'),
           );
         }
         if (reason === 'invalid_query') {
           throw ctx.fail(
             'invalid_query',
             'The GHO API rejected the generated query — a supplied filter value is not a valid OData literal.',
-            { indicatorCode: echoedCode, ...ctx.recoveryFor('invalid_query') },
+            { indicatorCode: echoedCode },
           );
         }
         if (reason === 'indicator_not_found') {
           throw ctx.fail(
             'indicator_not_found',
             `Indicator code "${echoedCode}" not found in the GHO catalog.`,
-            { indicatorCode: echoedCode, ...ctx.recoveryFor('indicator_not_found') },
+            { indicatorCode: echoedCode },
           );
         }
         throw err;
@@ -418,7 +415,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       throw ctx.fail(
         'no_data',
         `Indicator "${echoedCode}" returned no data for the applied filters.`,
-        { indicatorCode: echoedCode, ...ctx.recoveryFor('no_data') },
+        { indicatorCode: echoedCode },
       );
     }
 

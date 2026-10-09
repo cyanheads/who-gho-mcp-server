@@ -220,13 +220,16 @@ describe('whoListDimensionValues — malformed dimension code (#18)', () => {
     mockService.listDimensionValues.mockRejectedValue({
       data: { reason: 'malformed_identifier' },
     });
-    const ctx = createMockContext({ errors: whoListDimensionValues.errors });
-    const input = whoListDimensionValues.input.parse({ dimension: '\uD800' });
-
-    await expect(whoListDimensionValues.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'malformed_identifier',
-        recovery: { hint: expect.stringContaining('dimension') },
+    // The declared hint is filled by the tool pipeline, not the throw site, so this runs
+    // the definition through its contract boundary rather than calling the handler.
+    const result = await runToolContract(whoListDimensionValues, { dimension: '\uD800' });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'malformed_identifier',
+          recovery: { hint: expect.stringContaining('dimension') },
+        },
       },
     });
   });

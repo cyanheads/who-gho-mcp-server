@@ -3,7 +3,7 @@
  * @module tests/tools/who-query-indicator-data.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoQueryIndicatorData } from '@/mcp-server/tools/definitions/who-query-indicator-data.tool.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
@@ -554,15 +554,19 @@ describe('whoQueryIndicatorData — rejected query propagation (#12)', () => {
 
   it('re-wraps a service invalid_query into the typed contract failure with a recovery hint', async () => {
     mockService.queryData.mockRejectedValue({ data: { reason: 'invalid_query' } });
-    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
-    const input = whoQueryIndicatorData.input.parse({
+    // The declared hint is filled by the tool pipeline, not the throw site, so this runs
+    // the definition through its contract boundary rather than calling the handler.
+    const result = await runToolContract(whoQueryIndicatorData, {
       indicator_code: 'WHOSIS_000001',
       country_codes: ["J'PN"],
     });
-    await expect(whoQueryIndicatorData.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_query',
-        recovery: { hint: expect.stringContaining('who_list_dimension_values') },
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_query',
+          recovery: { hint: expect.stringContaining('who_list_dimension_values') },
+        },
       },
     });
   });
@@ -590,15 +594,17 @@ describe('whoQueryIndicatorData — malformed indicator code (#18)', () => {
 
   it('re-wraps a service malformed_identifier into the typed contract failure', async () => {
     mockService.queryData.mockRejectedValue({ data: { reason: 'malformed_identifier' } });
-    const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
-    const input = whoQueryIndicatorData.input.parse({ indicator_code: '\uD800' });
 
-    await expect(whoQueryIndicatorData.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'malformed_identifier',
-        // The service names its own parameter; the tool names the input field the
-        // caller actually set.
-        recovery: { hint: expect.stringContaining('indicator_code') },
+    const result = await runToolContract(whoQueryIndicatorData, { indicator_code: '\uD800' });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'malformed_identifier',
+          // The service names its own parameter; the tool names the input field the
+          // caller actually set.
+          recovery: { hint: expect.stringContaining('indicator_code') },
+        },
       },
     });
   });
