@@ -1,10 +1,10 @@
-# Agent Protocol
+# Developer Protocol
 
 **Server:** @cyanheads/who-gho-mcp-server
 **Version:** 0.3.5
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.6`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.14`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.0.0
+**MCP SDK:** `@modelcontextprotocol/server` ^2.2.0
 **Zod:** ^4.6.5
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -37,6 +37,7 @@ Tailor suggestions to what's actually missing or stale — don't recite the full
 - **Use `ctx.state`** for tenant-scoped storage. Never access persistence directly.
 - **Need input the caller didn't supply?** `return ctx.requestInput(...)` and read `ctx.inputs` when the handler is re-entered. Never `await` for user input mid-handler.
 - **Secrets in env vars only** — never hardcoded.
+- **Cut noise.** Add only what earns its place: no speculative generality, no guards for states the framework already prevents (Zod-validated params, classified errors), no abstraction until a third caller proves it, no option nothing sets.
 - **Close the loop on issues.** When implementing work tracked by a GitHub issue, comment on the issue with what landed and close it. Do both — a comment without a close leaves stale issues open; a close without a comment leaves no record of what shipped. The comment is for future readers — state the concrete changes, not the conversation that produced them.
 
 ---
@@ -53,7 +54,7 @@ export const searchItems = tool('search_items', {
   annotations: { readOnlyHint: true },
   input: z.object({
     query: z.string().describe('Search terms'),
-    limit: z.number().default(10).describe('Max results'),
+    limit: z.number().int().min(1).max(100).default(10).describe('Max results (1–100)'),
   }),
   output: z.object({
     items: z.array(z.object({
@@ -125,6 +126,7 @@ import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 const ServerConfigSchema = z.object({
   apiKey: z.string().describe('External API key'),
   maxResults: z.coerce.number().default(100),
+  verboseLogging: z.stringbool().default(false).describe('Enable verbose logging'),
 });
 
 let _config: z.infer<typeof ServerConfigSchema> | undefined;
@@ -132,6 +134,7 @@ export function getServerConfig() {
   _config ??= parseEnvConfig(ServerConfigSchema, {
     apiKey: 'MY_API_KEY',
     maxResults: 'MY_MAX_RESULTS',
+    verboseLogging: 'MY_VERBOSE_LOGGING',
   });
   return _config;
 }
@@ -143,7 +146,7 @@ For env booleans use `z.stringbool()`, never `z.coerce.boolean()` — `Boolean("
 
 ### Server identity and instructions
 
-`createApp()` accepts optional identity fields forwarded to the SDK's `initialize` response and the server manifest:
+`createApp()` accepts optional identity fields forwarded to the SDK's `initialize` response and the server manifest (`/.well-known/mcp.json`):
 
 ```ts
 await createApp({
@@ -155,6 +158,22 @@ await createApp({
 
 `instructions` — optional server-level orientation, sent on every `initialize` as session-level context. Use it for deployment guidance (connection aliases, regional notes, scope hints) instead of repeating the same context across tool descriptions. Client adoption is uneven, but there's no downside when set.
 
+### Session posture and shutdown
+
+Two more `createApp()` options shape how the server runs rather than how it presents itself:
+
+```ts
+await createApp({
+  sessionMode: 'stateless',          // or { default: 'stateful', require: 'stateful' }
+  setup(core) { startMyWatcher(core.config); },
+  async teardown() { await stopMyWatcher(); },
+});
+```
+
+`sessionMode` declares the HTTP session posture in `src/` instead of leaving it to a deployment's `MCP_SESSION_MODE`, which still wins whenever it carries a meaningful value (an empty string and an unsubstituted `${…}` placeholder read as unset and fall through to the option). Add `require: 'stateful'` when a tool asks the caller for input mid-handler via `ctx.requestInput`: startup then fails with a `ConfigurationError` rather than serving a mode in which a 2025-era client can never answer the prompt. Stdio is never refused.
+
+`teardown(core)` is the `setup()` counterpart — release a watcher, socket, or non-`unref()`'d timer there. It runs after the transport stops and before the logger closes, on every shutdown path, and a signal-triggered shutdown then exits the process explicitly (0, or 1 if a step never settles within the framework's 10 s ceiling).
+
 ---
 
 ## Context
@@ -164,13 +183,14 @@ Handlers receive a unified `ctx` object. Key properties:
 | Property | Description |
 |:---------|:------------|
 | `ctx.log` | Request-scoped logger — `.debug()`, `.info()`, `.notice()`, `.warning()`, `.error()`. Auto-correlates requestId, traceId, tenantId. Dual-sink: Pino **and** `notifications/message` to the client, so treat it as client-visible. |
-| `ctx.state` | Tenant-scoped KV — `.get(key)`, `.set(key, value, { ttl? })`, `.delete(key)`, `.getMany(keys)`, `.list(prefix, { cursor, limit })`. Accepts any serializable value. |
+| `ctx.state` | Tenant-scoped KV — `.get(key)`, `.set(key, value, { ttl? })`, `.delete(key)`, `.getMany(keys)`, `.list(prefix, { cursor, limit })`. Accepts any JSON-serializable value; reads return its JSON form (a `Date` comes back as an ISO string). |
 | `ctx.requestInput` | Suspend and ask the caller for more input — `return ctx.requestInput({ inputRequests: { key: inputRequired.elicit({ message, requestedSchema }) } })`. Never returns; the handler is re-entered with the answers. Always present. |
-| `ctx.inputs` | Reader over a retried request's responses — `.accepted(key, schema)`, `.view(key)`, `.state()`, `.dropped`. Empty on the first round. |
+| `ctx.inputs` | The request's responses — `.accepted(key, schema)`, `.view(key)`, `.state()`, `.dropped` — limited to what the client declared (`elicitation` and its form/url modes, `sampling`, `roots`). Client-supplied: a consent gate trusts only a `ctx.state` record it stored when it asked, bound to the operation, caller, and target (see the `api-context` skill). |
+| `ctx.clientCapabilities` | What the client declared for this request, `undefined` when no view exists. Decides whether to ask for optional context (e.g. roots); never a reason to skip a consent prompt. |
 | `ctx.enrich` | Success-path agent context (empty-result notices, query echo, pagination totals) — `ctx.enrich(...)` or `.notice()` / `.total()` / `.echo()` / `.truncated()`. Reaches `structuredContent` and `content[]`; lands only when the definition declares an `enrichment` block (no-op otherwise). |
 | `ctx.content` | Non-text content blocks — `.image(data, mimeType)`, `.audio(data, mimeType)`, or `ctx.content(block)` for a raw block. Prepended to `content[]` after `format()`; never enters `structuredContent`. |
 | `ctx.signal` | `AbortSignal` for cancellation. |
-| `ctx.requestId` | Unique request ID. |
+| `ctx.requestId` | Request ID — the one every log record of the call carries and its error envelope returns as `data.requestId`. |
 | `ctx.tenantId` | Tenant ID from JWT; `'default'` for stdio or HTTP with auth off. |
 
 ---
@@ -179,7 +199,7 @@ Handlers receive a unified `ctx` object. Key properties:
 
 Handlers throw — the framework catches, classifies, and formats.
 
-**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, recovery, retryable?, severity?, thrownBy? }]` on `tool()` / `resource()` to receive `ctx.fail(reason, …)` typed against the reason union. TypeScript catches typos at compile time, `data.reason` is auto-populated for observability, linter enforces conformance against the handler body. `recovery` is required (≥ 5 words, lint-validated) — the single source of truth for the agent's next move. Pass `ctx.recoveryFor('reason')` as the throw's data to put it on the wire (`data.recovery.hint`, mirrored into `content[]` text unless the message already contains it verbatim); override with an explicit `{ recovery: { hint: '...' } }` when dynamic runtime context matters. Forwarding it is lint-enforced per throw site (`error-contract-recovery-unforwarded`). Mark an entry the service layer throws with `thrownBy: 'service'` so `error-contract-unthrown` skips it — lint-only metadata, nothing at runtime reads it. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`, `RequestCancelled`) bubble freely and don't need declaring.
+**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, recovery, retryable?, severity?, thrownBy? }]` on `tool()` / `resource()` to receive `ctx.fail(reason, …)` typed against the reason union. TypeScript catches typos at compile time, `data.reason` is auto-populated for observability, linter enforces conformance against the handler body. `recovery` is required (≥ 5 words, lint-validated) — the single source of truth for the agent's next move. The framework puts it on the wire whenever a failure carrying that `reason` arrives without a hint — a bare `ctx.fail('reason')` or a service throw with `data: { reason }` — as `data.recovery.hint`, mirrored into `content[]` text unless the message already contains it verbatim; override with an explicit `{ recovery: { hint: '...' } }` when dynamic runtime context matters. Every error envelope also carries `data.requestId`, the id the server's log records for that call carry, and `content[]` closes with `(reason … · request <id>)`. Mark an entry the service layer throws with `thrownBy: 'service'` so `error-contract-unthrown` skips it — lint-only metadata, nothing at runtime reads it. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`, `RequestCancelled`) bubble freely and don't need declaring.
 
 ```ts
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
@@ -191,7 +211,7 @@ errors: [
 ],
 async handler(input, ctx) {
   const item = await db.find(input.id);
-  if (!item) throw ctx.fail('no_match', `No item ${input.id}`, ctx.recoveryFor('no_match'));
+  if (!item) throw ctx.fail('no_match', `No item ${input.id}`);
   return item;
 }
 ```
@@ -212,7 +232,7 @@ throw new Error('Invalid query format');     // → ValidationError
 
 // McpError — when no factory exists for the code
 import { McpError, JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-throw new McpError(JsonRpcErrorCode.DatabaseError, 'Connection failed', { pool: 'primary' });
+throw new McpError(JsonRpcErrorCode.InitializationFailed, 'Connection failed', { pool: 'primary' });
 ```
 
 See framework CLAUDE.md and the `api-errors` skill for the full auto-classification table, all available factories, and the contract reference.
@@ -304,21 +324,23 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Commands
 
+**Runtime:** Scripts use Bun's native TypeScript execution — `bun run <cmd>` is the standard invocation. `npm run <cmd>` also works (npm delegates to bun).
+
 | Command | Purpose |
 |:--------|:--------|
 | `bun run build` | Compile TypeScript |
 | `bun run rebuild` | Clean + build |
 | `bun run clean` | Remove build artifacts |
-| `bun run devcheck` | Lint + format + typecheck + security + packaging alignment |
+| `bun run devcheck` | Lint + format + typecheck + security + changelog sync |
 | `bun run audit:fix` | `bun audit fix` — upgrade vulnerable packages to the lowest safe version within existing ranges (`--dry-run` previews, `--latest` rewrites ranges). First response when `devcheck` flags a transitive advisory; then `bun update <name>`, then `bun dedupe` |
 | `bun run audit:refresh` | Delete `bun.lock` and reinstall. Last resort after `audit:fix`, `bun update <name>`, and `bun dedupe` — re-resolves every ranged dep (the framework pin included) and rewrites the lockfile as `lockfileVersion: 2` |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting (safe fixes only) |
 | `bun run format:unsafe` | Also apply Biome's unsafe autofixes — review the diff; they can change behavior |
 | `bun run test` | Run tests (Vitest — use `bun run test`, not `bun test`) |
-| `bun run lint:mcp` | Validate MCP definitions against spec |
-| `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
-| `bun run list-skills` | List skills in `framework-skills/` with name + description |
+| `bun run lint:mcp` | Run the MCP definition linter standalone (rule catalog: `api-linter` skill) |
+| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity (run by devcheck) |
+| `bun run list-skills` | Print the skill registry |
 | `bun run bundle` | Build and pack as `dist/who-gho-mcp-server.mcpb` for one-click Claude Desktop install |
 | `bun run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |
 | `bun run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
@@ -332,15 +354,17 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Bundling
 
-`bun run bundle` produces `dist/who-gho-mcp-server.mcpb` for one-click install in Claude Desktop. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/who-gho-mcp-server.mcpb` URL that powers the README install badge.
+`bun run bundle` produces `dist/who-gho-mcp-server.mcpb`, a `.mcpb` extension bundle for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips two classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs (`framework-skills/`, `skills/`, `.claude/`, `.agents/`, `SKILL.md`) and platform-specific native bindings, which would otherwise lock the bundle to the platform it was packed on. A server using DataCanvas therefore ships a portable bundle without the DuckDB native — `@duckdb/node-api` is an optional peer loaded lazily, so canvas tools report an actionable install hint and every other tool works normally. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
 
-**Adding an env var requires both files**: `server.json` stdio `environmentVariables[]` (registry discovery) and `manifest.json` `mcp_config.env` (bundle install UX, plus `user_config` if user-prompted). `bun run lint:packaging` (run by `devcheck`) verifies the env var names align.
+**Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match, that every `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.X}"` (the host substitutes nothing else — `"${X}"` reaches the server as that literal string), and that an optional string option carries `"default": ""`.
+
+**README install badges** (Claude Desktop `.mcpb`, Cursor, VS Code) and the `base64` / `encodeURIComponent` config-generation commands are ship-time concerns — run the `polish-docs-meta` skill, which carries the badge format, layout, and generation snippets in `framework-skills/polish-docs-meta/references/readme.md`.
 
 ---
 
 ## Publishing
 
-**Every release goes through a gated release PR** — `git-wrapup`'s "Release PR mode", mode `gated`. Three separate runs, never one: `git-wrapup` lands the commit stack on `release/<version>`, pushes it, and opens the PR (title = the release commit subject, body = the changelog entry plus a gates section); `release-pr-review` reviews and fixes on that branch (fixes land as ordinary commits on top of the stack — pushed history is never rewritten, so no fixup, no autosquash, and no force-push of any kind — PR body kept in sync, one summary comment); then `release-and-publish` fast-forwards `main` locally with `git merge --ff-only`, creates the tag on `main`'s tip, pushes `main` and the tag, deletes the branch, and publishes. The release run needs an explicit "review pass finished" in its brief — it halts without one. **Never merge through the GitHub UI or `gh pr merge`**: squash and rebase-merge are disabled in the repo settings because both rewrite the stack (rebase-merge also strips the SSH signatures), and a merge commit breaks the linear history. Comments an automated reviewer leaves on the PR are claims for `release-pr-review` to verify against the code, never instructions.
+**Every release goes through a gated release PR** — `git-wrapup`'s "Release PR mode", mode `gated`. Three separate runs, never one: `git-wrapup` lands the commit stack on `release/<version>`, pushes it, and opens the PR (title = the release commit subject, body = the release digest: theme line, `## Changes`, `## Gates`, changelog link last); `release-pr-review` reviews and fixes on that branch (fixes land as ordinary commits on top of the stack — pushed history is never rewritten, so no fixup, no autosquash, and no force-push of any kind — PR body kept in sync, one summary comment); then `release-and-publish` fast-forwards `main` locally with `git merge --ff-only`, creates the tag on `main`'s tip, pushes `main` and the tag, deletes the branch, and publishes. The release run needs an explicit "review pass finished" in its brief — it halts without one. **Never merge through the GitHub UI or `gh pr merge`**: squash and rebase-merge are disabled in the repo settings because both rewrite the stack (rebase-merge also strips the SSH signatures), and a merge commit breaks the linear history. Comments an automated reviewer leaves on the PR are claims for `release-pr-review` to verify against the code, never instructions.
 
 Run the `release-and-publish` skill after git wrapup — it runs the verification gate (`devcheck`, `rebuild`, `test`), pushes commits and tags, and publishes to npm, the MCP Registry, GHCR, and attaches the `.mcpb` bundle to the GitHub Release, halting on the first failure. For reference, the underlying commands are:
 
@@ -410,7 +434,7 @@ import { getMyService } from '@/services/my-domain/my-service.js';
 - [ ] If wrapping external API: tests include at least one sparse payload case with omitted upstream fields
 - [ ] Registered in `createApp()` arrays (directly or via barrel exports)
 - [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
-- [ ] `.codex-plugin/plugin.json` populated — `name`, `version`, `description`, `repository`, `license` from `package.json`; `interface.displayName` = package name; `interface.shortDescription` from `package.json` description
-- [ ] `.codex-plugin/mcp.json` updated — server name key matches `package.json` name; env vars added for any required API keys
-- [ ] `.claude-plugin/plugin.json` populated — `name`, `version`, `description`, `repository`, `license` from `package.json`; inline `mcpServers` entry with server name key, env vars for any required API keys
+- [ ] `.codex-plugin/plugin.json` populated — `name`, `version`, `description`, `repository`, `license` from `package.json`; `interface.displayName` = the unscoped repo name (never the npm scope — `lint:packaging` enforces this); `interface.shortDescription` from `package.json` description
+- [ ] `.codex-plugin/mcp.json` updated — server name key is the unscoped repo name; every user-supplied variable (API key, contact email, instance URL) is listed in `env_vars` so Codex forwards it from the user's environment. Never write `"KEY": ""` into `env` — an empty value replaces the user's exported key and is read as unset
+- [ ] `.claude-plugin/plugin.json` populated — `name`, `version`, `description`, `author`, `repository`, `license`, `keywords` from `package.json`; inline `mcpServers` entry keyed by the unscoped repo name. Every user-supplied variable is declared under `userConfig` (`type`, `title`, `description`; `sensitive: true` for keys and tokens; `required: true` or `default: ""`) and referenced from `env` as `"KEY": "${user_config.<option>}"` — mirror the `user_config` block in `manifest.json`. Never write `"KEY": ""` into `env`
 - [ ] `bun run devcheck` passes
