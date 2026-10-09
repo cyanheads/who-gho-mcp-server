@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-09-20 15:02:30
+Generated on: 2026-10-09 07:33:16
 
 ```text
 who-gho-mcp-server/
@@ -129,9 +129,11 @@ who-gho-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
