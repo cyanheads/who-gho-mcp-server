@@ -5,28 +5,26 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { applyReadLimit, readLimitSchema } from '@/utils/read-limit.js';
 import { wellFormed } from '@/utils/well-formed.js';
 
 export const whoSearchIndicators = tool('who_search_indicators', {
   title: 'Search WHO GHO Indicators',
   description:
-    'Search the WHO Global Health Observatory indicator catalog by keyword in the indicator name. ' +
-    'Returns indicator codes and names for use with who_query_indicator_data. ' +
-    'The search uses a substring match on indicator names — try terms like "life expectancy", ' +
-    '"immunization", "mortality", "diabetes", or "HIV". ' +
-    'If results are truncated, refine the query or page further into the same filtered result set with offset.',
+    'Search the WHO Global Health Observatory indicator catalog by words in the indicator name. Every whitespace-separated word must match independently as a case-insensitive substring, in any order; try "tuberculosis incidence", "sanitation basic", or "HIV". When no names match, an exact indicator-code lookup is attempted. Returns canonical indicator codes and names for who_query_indicator_data. Refine the query or page through the same result set with offset.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     query: z
       .string()
       .min(1)
-      .describe('Keyword to search in indicator names, e.g. "life expectancy" or "tuberculosis".'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
+      .refine(
+        (query) => query.trim().length > 0,
+        'Provide at least one search word or an exact indicator code.',
+      )
+      .describe('Words to match independently in indicator names, or an exact indicator code.'),
+    limit: readLimitSchema(100)
       .default(20)
       .describe('Maximum number of indicators to return. Default 20, max 100.'),
     offset: z
@@ -35,9 +33,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
       .min(0)
       .default(0)
       .describe(
-        'Zero-based offset into the matches for this query. Default 0. Read hasMore and ' +
-          'nextOffset from the response to continue paging. An offset at or beyond totalCount ' +
-          'returns an empty indicators array, not an error.',
+        'Zero-based offset into the matches for this query. Default 0. Read hasMore and nextOffset from the response to continue paging. An offset at or beyond totalCount returns an empty indicators array, not an error.',
       ),
   }),
   output: z.object({
@@ -94,17 +90,28 @@ export const whoSearchIndicators = tool('who_search_indicators', {
       ),
   },
 
+  enrichmentTrailer: {
+    effectiveQuery: { render: (value) => `**effectiveQuery:** ${escapeMarkdownInline(value)}` },
+    notice: { render: (value: string) => escapeMarkdownInline(value) },
+  },
+
   errors: [
     {
       reason: 'no_results',
       code: JsonRpcErrorCode.NotFound,
-      when: 'No indicators matched the query keyword.',
+      when: 'No indicator names matched every search word and no exact indicator code resolved.',
       recovery:
-        'Try a different keyword or use who_list_indicators to browse the full catalog without a filter.',
+        'Try fewer search words or a different keyword, use who_list_indicators to browse the catalog, or use who_get_indicator_metadata for known indicator codes.',
     },
   ],
 
   async handler(input, ctx) {
+    const { limit, notice: clampNotice } = applyReadLimit(
+      input.limit,
+      100,
+      'who_search_indicators',
+      ctx,
+    );
     ctx.log.info('Searching indicators', {
       query: input.query,
       limit: input.limit,
@@ -115,7 +122,7 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     // still receives the keyword as sent.
     const echoedQuery = wellFormed(input.query);
     const { indicators, total } = await getGhoService().listIndicators(
-      { query: input.query, limit: input.limit, offset: input.offset },
+      { query: input.query, limit, offset: input.offset },
       ctx,
     );
 
@@ -140,25 +147,26 @@ export const whoSearchIndicators = tool('who_search_indicators', {
     });
 
     // `notice` is last-wins — compose the applicable segment and write it once.
+    const notices = clampNotice ? [clampNotice] : [];
     if (pastEnd) {
-      ctx.enrich.notice(
-        `Offset ${input.offset} is at or beyond the ${total} indicators matching "${echoedQuery}"; ` +
-          `the last reachable offset is ${total - 1}.`,
+      notices.push(
+        `Offset ${input.offset} is at or beyond the ${total} indicators matching "${echoedQuery}"; the last reachable offset is ${total - 1}.`,
       );
     } else if (hasMore) {
-      ctx.enrich.notice(
-        `Showing ${indicators.length} of ${total} matches (offset ${input.offset}). ` +
-          `Request offset ${nextOffset} for the next page, raise the limit (max 100), ` +
-          'or refine the query for more targeted results.',
+      notices.push(
+        `Showing ${indicators.length} of ${total} matches (offset ${input.offset}). Request offset ${nextOffset} for the next page, raise the limit (max 100), or refine the query for more targeted results.`,
       );
     }
+    if (notices.length) ctx.enrich.notice(notices.join(' '));
     return { indicators };
   },
 
   format: (result) => {
     const lines = [`**Found indicators (showing ${result.indicators.length}):**`, ''];
     for (const ind of result.indicators) {
-      lines.push(`- **${ind.indicatorCode}**: ${ind.indicatorName}`);
+      lines.push(
+        `- **${escapeMarkdownInline(ind.indicatorCode)}**: ${escapeMarkdownInline(ind.indicatorName)}`,
+      );
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },

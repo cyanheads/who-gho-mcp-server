@@ -5,7 +5,9 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { applyReadLimit, readLimitSchema } from '@/utils/read-limit.js';
 import { wellFormed } from '@/utils/well-formed.js';
 
 const SEX_VALUES = ['SEX_BTSX', 'SEX_FMLE', 'SEX_MLE'] as const;
@@ -34,18 +36,7 @@ const SORT_MODES = {
 export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   title: 'Query WHO GHO Indicator Data',
   description:
-    'Query data rows for a single WHO GHO indicator with optional spatial, temporal, and dimension filters. ' +
-    'Returns rows with numeric values, uncertainty intervals (Low/High), and spatial/time metadata. ' +
-    'This is the primary data-fetching tool in the find-then-query workflow: ' +
-    'use who_search_indicators to find the indicator code, optionally call who_get_indicator_metadata ' +
-    'to confirm which filter dimensions are valid, then call this tool. ' +
-    'Spatial filters are mutually exclusive per call: provide only one of country_codes, region_codes, ' +
-    'or income_group_codes — mixing them triggers an error. ' +
-    'Omitting all spatial filters returns all geographies (may be large; use limit to cap). ' +
-    'The sex filter only applies when the indicator uses SEX as its first cross-cutting dimension — ' +
-    'if not, the filter returns empty rows; check who_get_indicator_metadata first if uncertain. ' +
-    'Rows are returned in a deterministic order (most recent first by default), so a capped result is ' +
-    'the top of a defined slice rather than an arbitrary sample; page through the rest with offset.',
+    'Query data rows for a single WHO GHO indicator with optional spatial, temporal, and dimension filters. Returns rows with numeric values, uncertainty intervals (Low/High), and spatial/time metadata. This is the primary data-fetching tool in the find-then-query workflow: use who_search_indicators to find the indicator code, optionally call who_get_indicator_metadata to confirm which filter dimensions are valid, then call this tool. Discover positional filters from returned dim1Type/dim1, dim2Type/dim2 and dim3Type/dim3 pairs; metadata alone does not identify a slot. Spatial filters are mutually exclusive per call: provide only one of country_codes, region_codes, or income_group_codes — mixing them triggers an error. Omitting all spatial filters returns all geographies (may be large; use limit to cap). The sex filter only applies when the indicator uses SEX as its first cross-cutting dimension — if not, the filter returns empty rows; check who_get_indicator_metadata first if uncertain. Rows are returned in a deterministic order (most recent first by default), so a capped result is the top of a defined slice rather than an arbitrary sample; page through the rest with offset.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_code: z
@@ -58,20 +49,13 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .array(z.string().min(1))
       .optional()
       .describe(
-        'ISO 3166-1 alpha-3 country codes to filter on, e.g. ["JPN","USA","BRA"]. ' +
-          'Mutually exclusive with region_codes and income_group_codes.',
+        'WHO country codes to filter on, e.g. ["JPN","USA","BRA"], including historical codes such as ME1 and SDN736. Discover codes with who_list_dimension_values dimension="COUNTRY". Mutually exclusive with region_codes and income_group_codes.',
       ),
     region_codes: z
       .array(z.string().min(1))
       .optional()
       .describe(
-        'WHO region codes to filter on, e.g. ["AFR","EUR","AMR","EMR","SEAR","WPR"]. ' +
-          'Returns the aggregate row for each named WHO region — not per-country rows within it. ' +
-          'To get country-level data for a region, use who_list_dimension_values with ' +
-          'dimension="COUNTRY" and parent_code set to the region code to retrieve the ISO codes ' +
-          'for countries in that region, then pass those to country_codes. ' +
-          'Use who_list_dimension_values with dimension="REGION" to see all valid region codes. ' +
-          'Mutually exclusive with country_codes and income_group_codes.',
+        'WHO region codes to filter on, e.g. ["AFR","EUR","AMR","EMR","SEAR","WPR"]. Returns the aggregate row for each named WHO region. To get country-level data for a region, use who_list_dimension_values with dimension="COUNTRY" and parent_code set to the region code to retrieve WHO country codes, then pass those to country_codes. Use who_list_dimension_values with dimension="REGION" to see all valid region codes. Mutually exclusive with country_codes and income_group_codes.',
       ),
     income_group_codes: z
       .array(z.string().min(1))
@@ -105,15 +89,23 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         'Value filter for indicators whose first cross-cutting dimension is not SEX ' +
           '(e.g. an AGEGROUP code like "YEARS05-14"). Ignored when sex is also provided.',
       ),
+    dim2_value: z
+      .string()
+      .optional()
+      .describe(
+        'Value filter for the second cross-cutting dimension, e.g. AGEGROUP_DAYS0-27. Discover the position from returned dim2Type/dim2 pairs; metadata does not identify the slot. Empty strings are ignored with a notice.',
+      ),
+    dim3_value: z
+      .string()
+      .optional()
+      .describe(
+        'Value filter for the third cross-cutting dimension, e.g. CHILDCAUSE_CH9. Discover the position from returned dim3Type/dim3 pairs; metadata does not identify the slot. Empty strings are ignored with a notice.',
+      ),
     include_uncertainty: z
       .boolean()
       .default(true)
       .describe('Include Low and High uncertainty interval bounds in output. Default true.'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(1000)
+    limit: readLimitSchema(1000)
       .default(200)
       .describe('Maximum number of data rows to return. Default 200, max 1000.'),
     offset: z
@@ -184,6 +176,11 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
               .optional()
               .describe('Second cross-cutting dimension type, e.g. "AGEGROUP".'),
             dim2: z.string().optional().describe('Second cross-cutting dimension value.'),
+            dim3Type: z
+              .string()
+              .optional()
+              .describe('Third cross-cutting dimension type, e.g. CHILDCAUSE.'),
+            dim3: z.string().optional().describe('Third cross-cutting dimension value.'),
             numericValue: z.number().optional().describe('Machine-readable numeric value.'),
             low: z
               .number()
@@ -230,6 +227,8 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           .describe('Applied year range, e.g. "2015–2023". Absent when no year filter was set.'),
         sex: z.string().optional().describe('Sex filter value applied, if any.'),
         dim1Value: z.string().optional().describe('dim1_value filter applied, if any.'),
+        dim2Value: z.string().optional().describe('dim2_value filter applied, if any.'),
+        dim3Value: z.string().optional().describe('dim3_value filter applied, if any.'),
         ordering: z
           .string()
           .describe('Row ordering applied to the query, e.g. "most recent first (year_desc)".'),
@@ -271,15 +270,20 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   enrichmentTrailer: {
     appliedFilters: {
       render: (filters) => {
-        const parts: string[] = [`- **Indicator:** ${filters.indicatorCode}`];
-        if (filters.spatialFilter) parts.push(`- **Spatial:** ${filters.spatialFilter}`);
-        if (filters.yearRange) parts.push(`- **Years:** ${filters.yearRange}`);
-        if (filters.sex) parts.push(`- **Sex:** ${filters.sex}`);
-        if (filters.dim1Value) parts.push(`- **Dim1:** ${filters.dim1Value}`);
-        parts.push(`- **Ordering:** ${filters.ordering}`);
+        const parts: string[] = [`- **Indicator:** ${escapeMarkdownInline(filters.indicatorCode)}`];
+        if (filters.spatialFilter)
+          parts.push(`- **Spatial:** ${escapeMarkdownInline(filters.spatialFilter)}`);
+        if (filters.yearRange)
+          parts.push(`- **Years:** ${escapeMarkdownInline(filters.yearRange)}`);
+        if (filters.sex) parts.push(`- **Sex:** ${escapeMarkdownInline(filters.sex)}`);
+        if (filters.dim1Value) parts.push(`- **Dim1:** ${escapeMarkdownInline(filters.dim1Value)}`);
+        if (filters.dim2Value) parts.push(`- **Dim2:** ${escapeMarkdownInline(filters.dim2Value)}`);
+        if (filters.dim3Value) parts.push(`- **Dim3:** ${escapeMarkdownInline(filters.dim3Value)}`);
+        parts.push(`- **Ordering:** ${escapeMarkdownInline(filters.ordering)}`);
         return `**Applied Filters:**\n${parts.join('\n')}`;
       },
     },
+    notice: { render: (notice: string) => `**Notice:** ${escapeMarkdownInline(notice)}` },
   },
 
   errors: [
@@ -316,7 +320,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'The GHO API rejected the generated OData query because a supplied filter value is not a valid literal.',
       recovery:
-        'Check the spatial codes and dim1_value for stray quotes or punctuation, then confirm valid codes with who_list_dimension_values and retry.',
+        'Check the spatial codes and dim1_value, dim2_value, or dim3_value for stray quotes or punctuation, then confirm valid codes with who_list_dimension_values and retry.',
     },
     {
       reason: 'malformed_identifier',
@@ -328,6 +332,12 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   ],
 
   async handler(input, ctx) {
+    const { limit, notice: clampNotice } = applyReadLimit(
+      input.limit,
+      1000,
+      'who_query_indicator_data',
+      ctx,
+    );
     // Validate mutual exclusion of spatial filters
     const spatialCount = [input.country_codes, input.region_codes, input.income_group_codes].filter(
       (arr) => arr?.length,
@@ -364,7 +374,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     const queryParams = {
       indicatorCode: input.indicator_code,
       includeUncertainty: input.include_uncertainty,
-      limit: input.limit,
+      limit,
       offset: input.offset,
       orderBy: sortMode.orderBy,
       ...(input.country_codes?.length && { countryCodes: input.country_codes }),
@@ -373,7 +383,9 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       ...(input.year_from != null && { yearFrom: input.year_from }),
       ...(input.year_to != null && { yearTo: input.year_to }),
       ...(input.sex && { sex: input.sex }),
-      ...(input.dim1_value && { dim1Value: input.dim1_value }),
+      ...(!input.sex && input.dim1_value && { dim1Value: input.dim1_value }),
+      ...(input.dim2_value && { dim2Value: input.dim2_value }),
+      ...(input.dim3_value && { dim3Value: input.dim3_value }),
     };
     const { rows, totalRows, truncated } = await getGhoService()
       .queryData(queryParams, ctx)
@@ -445,7 +457,9 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         ...(spatialFilter && { spatialFilter }),
         ...(yearRange && { yearRange }),
         ...(input.sex && { sex: input.sex }),
-        ...(input.dim1_value && { dim1Value: wellFormed(input.dim1_value) }),
+        ...(!input.sex && input.dim1_value && { dim1Value: wellFormed(input.dim1_value) }),
+        ...(input.dim2_value && { dim2Value: wellFormed(input.dim2_value) }),
+        ...(input.dim3_value && { dim3Value: wellFormed(input.dim3_value) }),
         ordering: sortMode.label,
       },
       totalRows,
@@ -456,25 +470,45 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       ...(truncated && { nextOffset }),
     });
 
-    // `notice` is last-wins, and enrich.truncated() writes it too — the two cases are
-    // mutually exclusive (paging past the end leaves nothing to truncate), so exactly
-    // one of these writes it per return path.
+    const notices: string[] = clampNotice ? [clampNotice] : [];
+    for (const field of ['country_codes', 'region_codes', 'income_group_codes'] as const) {
+      if (input[field]?.length === 0) notices.push(`Ignored ${field}: the array is empty.`);
+    }
+    for (const field of ['dim1_value', 'dim2_value', 'dim3_value'] as const) {
+      if (input[field] === '') notices.push(`Ignored ${field}: the string is empty.`);
+    }
+    if (input.sex && input.dim1_value)
+      notices.push('Ignored dim1_value because sex takes precedence.');
+    const requestedCodes = input.country_codes?.length
+      ? input.country_codes
+      : input.region_codes?.length
+        ? input.region_codes
+        : input.income_group_codes;
+    if (requestedCodes?.length && input.offset === 0 && !truncated) {
+      const returnedCodes = new Set(
+        rows.flatMap((row) => (row.spatialDim === undefined ? [] : [row.spatialDim.toUpperCase()])),
+      );
+      const unmatched = requestedCodes.filter((code) => !returnedCodes.has(code.toUpperCase()));
+      if (unmatched.length)
+        notices.push(
+          `Spatial codes with unknown code or no data for these filters: ${unmatched.map(wellFormed).join(', ')}.`,
+        );
+    }
     if (truncated) {
+      const guidance = `Showing the ${sortMode.slice} ${rows.length} of ${totalRows} rows (offset ${input.offset}). Request offset ${nextOffset} for the next page, raise the limit (max 1000), or narrow the filters (year range, spatial codes).`;
       ctx.enrich.truncated({
         shown: rows.length,
-        cap: input.limit,
+        cap: limit,
         ceiling: 1000,
-        guidance:
-          `Showing the ${sortMode.slice} ${rows.length} of ${totalRows} rows (offset ${input.offset}). ` +
-          `Request offset ${nextOffset} for the next page, raise the limit (max 1000), ` +
-          'or narrow the filters (year range, spatial codes).',
+        guidance,
       });
+      notices.push(guidance);
     } else if (pastEnd) {
-      ctx.enrich.notice(
-        `Offset ${input.offset} is at or beyond the ${totalRows} rows matching these filters; ` +
-          `the last reachable offset is ${totalRows - 1}.`,
+      notices.push(
+        `Offset ${input.offset} is at or beyond the ${totalRows} rows matching these filters; the last reachable offset is ${totalRows - 1}.`,
       );
     }
+    if (notices.length) ctx.enrich.notice(notices.join(' '));
 
     return { rows };
   },
@@ -482,23 +516,47 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   format: (result) => {
     const lines: string[] = [`**Rows returned: ${result.rows.length}**`, ''];
     for (const row of result.rows) {
-      const spatial = [row.spatialDimType, row.spatialDim].filter(Boolean).join(' / ');
+      const spatial = [row.spatialDimType, row.spatialDim]
+        .filter((value) => value !== undefined)
+        .map(escapeMarkdownInline)
+        .join(' / ');
       // The parent region gets its own labelled segment. Slash-joined onto the spatial
       // group it read as a third coordinate of the row's own location instead.
       const parentParts = [
-        row.parentLocation,
-        row.parentLocationCode && `(${row.parentLocationCode})`,
-      ].filter(Boolean);
+        row.parentLocation !== undefined ? escapeMarkdownInline(row.parentLocation) : undefined,
+        row.parentLocationCode !== undefined
+          ? `(${escapeMarkdownInline(row.parentLocationCode)})`
+          : undefined,
+      ].filter((value) => value !== undefined);
       const parent = parentParts.length > 0 ? ` — parent: ${parentParts.join(' ')}` : '';
-      const dim1 = row.dim1Type ? ` | ${row.dim1Type}: ${row.dim1}` : '';
-      const dim2 = row.dim2Type ? ` | ${row.dim2Type}: ${row.dim2}` : '';
-      const displayPart = row.displayValue ? ` display=${row.displayValue}` : '';
+      const dimensions = [
+        [row.dim1Type, row.dim1],
+        [row.dim2Type, row.dim2],
+        [row.dim3Type, row.dim3],
+      ]
+        .map(([type, value], index) => {
+          if (type === undefined && value === undefined) return '';
+          const label = type === undefined ? `Dim${index + 1}` : escapeMarkdownInline(type);
+          return value === undefined
+            ? ` | ${label}`
+            : ` | ${label}: ${escapeMarkdownInline(value)}`;
+        })
+        .join('');
+      const displayPart =
+        row.displayValue !== undefined ? ` display=${escapeMarkdownInline(row.displayValue)}` : '';
       const numericPart = row.numericValue != null ? ` numeric=${row.numericValue}` : '';
-      const uncertainty = row.low != null && row.high != null ? ` [${row.low}–${row.high}]` : '';
-      const comments = row.comments ? ` — ${row.comments}` : '';
+      const uncertainty =
+        row.low != null && row.high != null
+          ? ` [${row.low}–${row.high}]`
+          : row.low != null
+            ? ` [low: ${row.low}]`
+            : row.high != null
+              ? ` [high: ${row.high}]`
+              : '';
+      const comments = row.comments !== undefined ? ` — ${escapeMarkdownInline(row.comments)}` : '';
       const yearPart = row.year != null ? `**${row.year}**` : '**—**';
       lines.push(
-        `- [${row.indicatorCode}] ${yearPart} | ${spatial}${parent}${dim1}${dim2}${displayPart}${numericPart}${uncertainty}${comments}`,
+        `- [${escapeMarkdownInline(row.indicatorCode)}] ${yearPart} | ${spatial}${parent}${dimensions}${displayPart}${numericPart}${uncertainty}${comments}`,
       );
     }
     return [{ type: 'text', text: lines.join('\n') }];

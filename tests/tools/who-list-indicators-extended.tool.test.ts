@@ -24,8 +24,8 @@ describe('whoListIndicators — input validation', () => {
     expect(() => whoListIndicators.input.parse({ limit: 0 })).toThrow();
   });
 
-  it('rejects limit=501 (max 500)', () => {
-    expect(() => whoListIndicators.input.parse({ limit: 501 })).toThrow();
+  it('accepts an oversized limit for bounded processing', () => {
+    expect(whoListIndicators.input.parse({ limit: 501 }).limit).toBe(501);
   });
 
   it('accepts limit at boundaries: 1 and 500', () => {

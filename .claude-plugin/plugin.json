@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "who-gho-mcp-server",
   "version": "0.3.6",
-  "description": "Query WHO Global Health Observatory data — 3,059 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.",
+  "description": "Query WHO Global Health Observatory data — 3,102 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads",
     "email": "casey@caseyjhand.com",
@@ -17,8 +17,18 @@
       "command": "npx",
       "args": ["-y", "@cyanheads/who-gho-mcp-server"],
       "env": {
-        "MCP_TRANSPORT_TYPE": "stdio"
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "GHO_CLAMP_LIMITS": "${user_config.gho_clamp_limits}"
       }
+    }
+  },
+  "userConfig": {
+    "gho_clamp_limits": {
+      "type": "boolean",
+      "title": "Clamp oversized reads",
+      "description": "Return bounded pages and metadata continuations; disable to reject oversized requests.",
+      "default": true,
+      "required": false
     }
   }
 }

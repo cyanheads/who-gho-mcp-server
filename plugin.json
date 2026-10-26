@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "who-gho-mcp-server",
+  "version": "0.3.6",
+  "description": "Query WHO Global Health Observatory data — 3,102 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
+  },
+  "homepage": "https://github.com/cyanheads/who-gho-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/who-gho-mcp-server.git",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "typescript",
+    "bun",
+    "stdio",
+    "streamable-http",
+    "ai-agent",
+    "who",
+    "gho",
+    "global-health",
+    "health-data",
+    "global-health-observatory",
+    "odata",
+    "public-health"
+  ]
+}

@@ -3,7 +3,7 @@
  * @module tests/resources/who-dimension-values.resource.test
  */
 
-import { validationError } from '@cyanheads/mcp-ts-core/errors';
+import { notFound, validationError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -183,8 +183,7 @@ describe('whoDimensionValuesByParentResource', () => {
   });
 
   it('returns an empty page when the parent filter matches nothing', async () => {
-    // Upstream answers HTTP 200 with value: [] for both an unknown dimension and a
-    // filter that matched nothing — only the unfiltered case may claim non-existence.
+    // A filtered empty success means the service verified the dimension exists.
     mockService.listDimensionValues.mockResolvedValue(page([]));
     const ctx = createMockContext();
     const params = whoDimensionValuesByParentResource.params!.parse({
@@ -199,6 +198,20 @@ describe('whoDimensionValuesByParentResource', () => {
     expect(result.totalCount).toBe(0);
     expect(result.hasMore).toBe(false);
     expect(result.notice).toContain('NOSUCHREGION');
+  });
+
+  it('propagates a filtered dimension miss and recovery without producing an existence notice', async () => {
+    const error = notFound('Dimension not found', {
+      reason: 'dimension_not_found',
+      recovery: { hint: 'Use who_list_dimensions to discover valid codes.' },
+    });
+    mockService.listDimensionValues.mockRejectedValue(error);
+    await expect(
+      whoDimensionValuesByParentResource.handler(
+        { dimensionCode: 'NOT_REAL', limit: 2, offset: 0, parentCode: 'EUR' },
+        createMockContext(),
+      ),
+    ).rejects.toBe(error);
   });
 });
 

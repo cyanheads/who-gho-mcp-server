@@ -39,12 +39,9 @@ await createApp({
     whoDimensionValuesByParentResource,
   ],
   prompts: [],
+  skills: 'skills',
   instructions:
-    'WHO Global Health Observatory MCP server. Primary workflow: ' +
-    '(1) who_search_indicators to find indicator codes by keyword, ' +
-    '(2) who_get_indicator_metadata to confirm valid filter dimensions, ' +
-    '(3) who_query_indicator_data to fetch data with country/region/year/sex filters. ' +
-    'Use who_list_dimensions → who_list_dimension_values to discover valid filter codes.',
+    'WHO Global Health Observatory MCP server. Use who_search_indicators or who_list_indicators to obtain indicator codes, who_get_indicator_metadata for available dimension types, and who_query_indicator_data for observations. Resolve dimension value codes through who_list_dimensions → who_list_dimension_values. Metadata does not identify dimension positions; inspect returned type/value pairs before positional filtering. The public upstream API needs no key.',
   setup(core) {
     initGhoService(core.config, core.storage);
   },

@@ -3,7 +3,12 @@
  * @module tests/tools/who-get-indicator-metadata.tool.test
  */
 
-import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import {
+  createInMemoryStorage,
+  createMockContext,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoGetIndicatorMetadata } from '@/mcp-server/tools/definitions/who-get-indicator-metadata.tool.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
@@ -11,6 +16,21 @@ import * as ghoServiceModule from '@/services/gho/gho-service.js';
 const mockService = {
   getIndicatorDimensions: vi.fn(),
   listIndicators: vi.fn(),
+  getIndicatorMetadata(...args: Parameters<ghoServiceModule.GhoService['getIndicatorMetadata']>) {
+    const service = Object.assign(
+      new ghoServiceModule.GhoService({} as AppConfig, createInMemoryStorage()),
+      {
+        ...mockService,
+        async getIndicatorDimensions(
+          ...[codes, ctx]: Parameters<ghoServiceModule.GhoService['getIndicatorDimensions']>
+        ) {
+          const dimensions = await mockService.getIndicatorDimensions(codes, ctx);
+          return new Map(codes.map((code) => [code, dimensions.get(code) ?? []]));
+        },
+      },
+    );
+    return ghoServiceModule.GhoService.prototype.getIndicatorMetadata.call(service, ...args);
+  },
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);

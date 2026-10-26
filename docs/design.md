@@ -6,10 +6,10 @@
 
 | Name | Description | Key Inputs | Annotations |
 |:-----|:------------|:-----------|:------------|
-| `who_search_indicators` | Search the 3,059-indicator catalog by keyword in indicator name. Returns indicator codes and names for use with query tools. | `query` (keyword), `limit` | `readOnlyHint: true` |
+| `who_search_indicators` | Search the 3,102-indicator catalog by independently matched words in indicator names, with exact-code fallback when names have no matches. | `query`, `limit`, `offset` | `readOnlyHint: true` |
 | `who_list_indicators` | List indicators with optional pagination. Use for browsing when you don't have a keyword, or to page through the full catalog. | `limit`, `offset` | `readOnlyHint: true` |
-| `who_get_indicator_metadata` | Get metadata for one or more indicator codes: full name and the dimensions it supports (COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, etc.). Call this before querying data to understand which filter dimensions are valid. | `indicator_codes` (array, up to 10) | `readOnlyHint: true` |
-| `who_query_indicator_data` | Query data for a single indicator with filters: countries, regions, years, sex, income group. Returns rows with numeric values, uncertainty intervals, and spatial/time metadata. The primary data-fetching tool. | `indicator_code`, `country_codes`, `region_codes`, `income_group_codes`, `year_from`, `year_to`, `sex`, `dim1_value`, `limit` | `readOnlyHint: true` |
+| `who_get_indicator_metadata` | Resolve canonical names and dimension types; types do not identify positional slots. Process 10 entries per call with continuation. | `indicator_codes` | `readOnlyHint: true` |
+| `who_query_indicator_data` | Query one indicator with spatial, temporal, sex, and positional dimension filters. Return observations with sparse coordinates and uncertainty bounds preserved. | `indicator_code`, spatial codes, years, `sex`, `dim1_value`, `dim2_value`, `dim3_value`, `limit`, `offset` | `readOnlyHint: true` |
 | `who_list_dimension_values` | List valid codes and labels for a dimension type (COUNTRY, REGION, SEX, WORLDBANKINCOMEGROUP, AGEGROUP, etc.). Use to discover valid filter values before calling `who_query_indicator_data`. | `dimension` | `readOnlyHint: true` |
 | `who_list_dimensions` | List all dimension type codes and titles available in the GHO API. Use to discover valid dimension codes for `who_list_dimension_values`. | _(none)_ | `readOnlyHint: true` |
 
@@ -18,9 +18,16 @@
 | URI Template | Description | Pagination |
 |:-------------|:------------|:-----------|
 | `who://indicator/{indicatorCode}/metadata` | Metadata for a single indicator: full name and supported dimensions. | No |
-| `who://dimension/{dimensionCode}/values` | All valid values for a dimension type. | No |
+| `who://dimension/{dimensionCode}/values` | First 100 valid values for a dimension type. | First page |
+| `who://dimension/{dimensionCode}/values{?limit,offset}` | An explicit dimension-values page. | Yes |
+| `who://dimension/{dimensionCode}/values{?limit,offset,parentCode}` | A page narrowed to one parent. | Yes |
+| `skill://{+path}` | Published calling-agent skill files. | No |
 
 **Tool coverage note:** `who_list_dimensions` covers the dimension type catalog. `who_list_dimension_values` covers per-dimension values. Both data surfaces are reachable via tools — resources are supplementary.
+
+### Published skill
+
+`skills/who-gho-guide/SKILL.md` carries positional dimension discovery and completeness gates for country/aggregate comparisons. It is delivered through plugin installs, npm, Docker, and MCPB. `createApp({ skills: 'skills' })` also advertises `io.modelcontextprotocol/skills`, adds `skills/list`, `skills/get`, and `resources/directory/read`, lists the skill in `resources/list`, and registers `skill://{+path}`. This adds a skill resource without adding a tool or prompt.
 
 ### Prompts
 
@@ -30,7 +37,7 @@ None. This server is purely data-oriented — no recurring interaction patterns 
 
 ## Overview
 
-Read-only MCP server exposing the WHO Global Health Observatory (GHO) API. Gives agents structured access to 3,059 global health indicators covering 194 WHO member states: life expectancy, disease prevalence, immunization coverage, nutrition, mortality, health systems capacity, and SDG health targets.
+Read-only MCP server exposing the WHO Global Health Observatory (GHO) API. Gives agents structured access to 3,102 global health indicators covering 194 WHO member states: life expectancy, disease prevalence, immunization coverage, nutrition, mortality, health systems capacity, and SDG health targets.
 
 Primary use case is the find-then-query workflow: search/browse indicators → get metadata to understand available dimensions → query data with country/year/sex filters. Complements CDC (US-only) by providing the global view.
 
@@ -40,16 +47,16 @@ Primary use case is the find-then-query workflow: search/browse indicators → g
 
 - Read-only. No authentication required.
 - Covers the GHO OData API at `https://ghoapi.azureedge.net/api/`
-- 3,059 indicators; discovery (keyword search + browsing) is essential
+- 3,102 indicators; discovery (keyword search + browsing) is essential
 - Data rows have: `SpatialDim` (country/region code), `TimeDim` (year), `Dim1`/`Dim2`/`Dim3` (dimensions like SEX, AGEGROUP), `NumericValue`, `Low`/`High` (uncertainty interval), `Value` (formatted string), `Comments`
-- Key spatial filter types: `COUNTRY` (ISO 3166-1 alpha-3), `REGION` (WHO regions: AFR, AMR, EMR, EUR, SEAR, WPR), `WORLDBANKINCOMEGROUP` (WB_HI, WB_LMI, WB_LI, WB_UMI, WB_MI), `GLOBAL`
+- Key spatial filter types: `COUNTRY` (WHO country codes, including historical entries), `REGION` (WHO regions: AFR, AMR, EMR, EUR, SEAR, WPR), `WORLDBANKINCOMEGROUP` (WB_HI, WB_LMI, WB_LI, WB_UMI, WB_MI), `GLOBAL`
 - Key cross-dimension: SEX (SEX_BTSX, SEX_FMLE, SEX_MLE), AGEGROUP, WORLDBANKINCOMEGROUP
 - OData $filter supports: `eq`, `in()`, `contains()`, `and`, `or`, `ge`, `le`, `gt`, `lt`
 - OData $select, $orderby, $top, $skip, $count all work
 - Invalid indicator code → HTTP 404 (empty body). Invalid filter value → HTTP 200 with empty `value` array. Invalid dimension code in `/DIMENSION/{code}/DimensionValues` → HTTP 200 with empty `value` array (not a 404).
-- Unknown indicator code in `/IndicatorDimension?$filter=IndicatorCode eq '...'` → HTTP 200 with empty `value` array (not a 404). Distinguishing "unknown code" from "known code with no metadata" requires checking for empty `value` after a 200.
+- Unknown indicator code in `/IndicatorDimension?$filter=IndicatorCode eq '...'` → HTTP 200 with empty `value` array (not a 404). Resolve existence separately against the Indicator catalog; a valid catalog entry can have no dimension listing.
 - `UNREGION` and `UNSDGREGION` are additional `SpatialDimType` values present in real data rows (e.g., numeric UN region codes like `"513"` for `UNREGION`). These are not filterable via the spatial filter parameters — they appear in unfiltered results.
-- SEX is consistently `Dim1Type` when it appears. AGEGROUP and other cross-cutting types appear as `Dim2Type` when a row has both SEX and a second dimension. The `dim1_value` escape hatch only handles `Dim1` — there is no `dim2_value` parameter in the current design; filtering on AGEGROUP requires calling `who_get_indicator_metadata` to confirm dimension positions.
+- Metadata lists dimension types without positions. Inspect returned `dim1Type`/`dim1`, `dim2Type`/`dim2`, and `dim3Type`/`dim3` pairs before selecting positional filters. For example, `MORT_100` rows can carry SEX, AGEGROUP, and CHILDCAUSE in positions 1, 2, and 3. Missing coordinates remain absent.
 - No official rate limit documented. Public API, generous limits observed in practice.
 
 ---
@@ -67,7 +74,8 @@ Primary use case is the find-then-query workflow: search/browse indicators → g
 | Env Var | Required | Description |
 |:--------|:---------|:------------|
 | `GHO_BASE_URL` | No | Override the GHO API base URL. Defaults to `https://ghoapi.azureedge.net/api/`. |
-| `GHO_REQUEST_TIMEOUT_MS` | No | Request timeout in milliseconds. Default `30000`. |
+| `GHO_REQUEST_TIMEOUT_MS` | No | Service-operation deadline covering attempts, body reads, retries, and backoff. Default `30000` milliseconds. |
+| `GHO_CLAMP_LIMITS` | No | Default `true`: clamp oversized positive integer pages with notices and process metadata in 10-code batches with continuation. `false` restores advertised maxima and oversized-input rejection. |
 
 No API key needed. No auth config needed.
 
@@ -94,7 +102,7 @@ The GHO OData API has a clear three-layer model:
 
 | Layer | Endpoint | Notes |
 |:------|:---------|:------|
-| **Indicator catalog** | `GET /Indicator` | 3,059 rows; fields: `IndicatorCode`, `IndicatorName`, `Language`. Supports `$filter=contains(IndicatorName,'...')`, `$top`, `$skip`, `$count`. |
+| **Indicator catalog** | `GET /Indicator` | 3,102 rows; fields: `IndicatorCode`, `IndicatorName`, `Language`. Supports `$filter=contains(IndicatorName,'...')`, `$top`, `$skip`, `$count`. |
 | **Dimension catalog** | `GET /DIMENSION` | List of all dimension type codes and titles (`Code`, `Title`). No nav property on this endpoint — use the separate DimensionValues endpoint. |
 | **Dimension values** | `GET /DIMENSION/{code}/DimensionValues` | Valid values for one dimension type. Fields: `Code`, `Title`, `ParentDimension`, `Dimension`, `ParentCode`, `ParentTitle`. Invalid dimension code returns HTTP 200 with empty `value` array. |
 | **Indicator data** | `GET /{IndicatorCode}` | Each indicator is its own OData entity set. Full row schema: see below. Supports all OData query options. |
@@ -139,7 +147,7 @@ The GHO OData API has a clear three-layer model:
 
 | # | Tool | Purpose |
 |:--|:-----|:--------|
-| 1 | `who_list_dimension_values` | `dimension: "COUNTRY"` → confirms ISO code for target country |
+| 1 | `who_list_dimension_values` | `dimension: "COUNTRY"` → resolves the WHO code for the target country |
 | 2 | Multiple `who_query_indicator_data` calls | Different indicators for same country/year range |
 
 ### Workflow: Regional comparison (income group)
@@ -165,12 +173,15 @@ The tool builds one OData request. No multi-step orchestration needed — OData'
 
 ```
 input:
-  query: string — keyword to search in indicator names
+  query: string — words matched independently in indicator names, with exact-code fallback
   limit: number (default 20, max 100) — max results to return
+  offset: number (default 0)
 output:
   indicators: Array<{ indicatorCode: string, indicatorName: string }>
-  totalMatches: number — total count matching the query (for paging awareness)
-  note: string? — if limit was reached, hint to refine query or paginate
+  totalCount: number — total count matching the selected name-search or exact-code result set
+  hasMore: boolean
+  nextOffset: number? — continuation offset
+  notice: string? — limit, pagination, or past-end guidance
 errors:
   - no_results: NotFound — when query matches nothing
 annotations: readOnlyHint: true, openWorldHint: false
@@ -184,7 +195,7 @@ input:
   offset: number (default 0)
 output:
   indicators: Array<{ indicatorCode: string, indicatorName: string }>
-  total: number
+  totalCount: number
   hasMore: boolean
 annotations: readOnlyHint: true, openWorldHint: false
 ```
@@ -193,7 +204,7 @@ annotations: readOnlyHint: true, openWorldHint: false
 
 ```
 input:
-  indicator_codes: string[] (max 10) — e.g. ["WHOSIS_000001"]
+  indicator_codes: string[] — up to 1,000 entries, first 10 processed; max 10 when clamping disabled
 output:
   indicators: Array<{
     indicatorCode: string,
@@ -202,40 +213,45 @@ output:
     — dimension maps to IndicatorDimension.Dimension (e.g. "COUNTRY", "SEX")
     — dimensionName maps to IndicatorDimension.DimensionName (e.g. "Country", "Sex")
   }>
-  notFound: string[] — codes that returned empty metadata (API returns 200 + empty value array for unknown codes)
+  notFound: string[] — processed codes resolving to neither a catalog entry nor dimension rows
+  unprocessedCodes: string[]? — remaining request entries, in order, to submit next
 errors:
-  - all_not_found: NotFound — when all requested codes return empty metadata
+  - all_not_found: NotFound — no processed code resolves and no continuation remains
 annotations: readOnlyHint: true, openWorldHint: false
 ```
 
-Implemented with `Promise.all` — one `/IndicatorDimension?$filter=IndicatorCode eq '...'` call per code, fanned out in parallel. The API always returns HTTP 200 for this endpoint (even for unknown codes); codes with an empty `value` array go into `notFound`. Note: results may include `PUBLISHSTATE` as a dimension — this is an internal publishing status dimension, not a user-filterable dimension. Filter it from the output before returning to callers.
+Catalog identity and dimension metadata are resolved separately. A catalog match supplies the canonical code and name, including when requested with different casing. A code with dimension rows alone retains its code as the fallback name. Only a code with neither signal enters `notFound`; an empty dimension listing on a valid code carries `dimensionsNote`. `PUBLISHSTATE` is excluded because it is not a caller-filterable data dimension.
 
 ### `who_query_indicator_data`
 
 ```
 input:
   indicator_code: string — e.g. "WHOSIS_000001"
-  country_codes: string[]? — ISO 3-letter codes e.g. ["JPN","USA"]
+  country_codes: string[]? — WHO country codes e.g. ["JPN","USA"], including historical codes
   region_codes: string[]? — WHO region codes e.g. ["AFR","EUR"]
   income_group_codes: string[]? — World Bank codes e.g. ["WB_HI","WB_LMI"]
   year_from: number? — start year inclusive
   year_to: number? — end year inclusive
   sex: enum? — "SEX_BTSX" | "SEX_FMLE" | "SEX_MLE"
-  dim1_value: string? — arbitrary Dim1 filter for indicators with non-SEX Dim1 (e.g. AGEGROUP code)
+  dim1_value: string? — arbitrary Dim1 filter; sex takes precedence with a notice
+  dim2_value: string? — value in the observed second dimension position
+  dim3_value: string? — value in the observed third dimension position
   include_uncertainty: boolean (default true) — whether to include Low/High bounds in output
   limit: number (default 200, max 1000)
 output:
   rows: Array<{
     indicatorCode: string,
-    spatialDimType: string,
-    spatialDim: string,
+    spatialDimType: string?,
+    spatialDim: string?,
     parentLocation: string?,      -- ParentLocation: parent WHO region name, absent on region/aggregate rows
     parentLocationCode: string?,  -- ParentLocationCode: parent WHO region code, chainable to region_codes
-    year: number,
+    year: number?,
     dim1Type: string?,
     dim1: string?,
     dim2Type: string?,   -- Dim2 type when present (e.g. AGEGROUP, ENVCAUSE)
     dim2: string?,       -- Dim2 value when present
+    dim3Type: string?,   -- Third dimension type when present
+    dim3: string?,       -- Third dimension value when present
     numericValue: number?,
     low: number?,
     high: number?,
@@ -243,8 +259,10 @@ output:
     comments: string?
   }>
   totalRows: number  -- $count from OData
-  truncated: boolean  -- true if totalRows > limit
-  truncatedNote: string?  -- how to retrieve more if truncated
+  truncated: boolean?  -- true when rows remain after this page
+  hasMore: boolean
+  nextOffset: number?  -- continuation offset
+  notice: string?  -- composed filter, limit, and pagination guidance
 errors:
   - indicator_not_found: NotFound — 404 on /{indicatorCode}
   - no_data: NotFound — valid indicator, empty result for given filters
@@ -258,7 +276,7 @@ Note: filtering by `SpatialDim in (...)` without a `SpatialDimType` filter works
 
 **Year filter:** `TimeDim ge {year_from} and TimeDim le {year_to}` appended when provided.
 
-**Sex filter:** appended as `Dim1Type eq 'SEX' and Dim1 eq '{sex}'` — SEX is consistently the `Dim1Type` position when present (verified against real data), so this is safe to apply without a prior metadata call. If the indicator doesn't use SEX at all, the filter returns empty and the output `noDataNote` suggests checking dimension metadata.
+**Cross-cutting filters:** `sex` adds `Dim1Type eq 'SEX' and Dim1 eq '{sex}'` and takes precedence over `dim1_value`. Positional values add escaped equality predicates on Dim1, Dim2, or Dim3. Discover positions from observation type/value pairs: metadata alone does not identify a slot. Empty values are ignored with a notice, and applied-filter echoes include only predicates actually used.
 
 ### `who_list_dimension_values`
 
@@ -275,13 +293,16 @@ output:
     parentDimension?: string  — maps to DimensionValue.ParentDimension (e.g. "REGION" for country entries)
   }>
   dimension: string
-  dimensionTitle: string  — not returned by API; derive from who_list_dimensions or omit
+  totalCount: number
+  hasMore: boolean
+  nextOffset: number?
+  notice: string?
 errors:
-  - dimension_not_found: NotFound — when API returns empty value array (the API returns HTTP 200 for unknown dimensions, not 404; treat empty response as not-found)
+  - dimension_not_found: NotFound — an unfiltered lookup has no values, or an empty parent-filtered lookup fails the dimension metadata existence check
 annotations: readOnlyHint: true, openWorldHint: false
 ```
 
-**Implementation note:** The API returns HTTP 200 with an empty `value` array for unknown dimension codes. The tool must check for empty `value` and raise `NotFound` rather than detecting by HTTP status. `dimensionTitle` is not part of the DimensionValues response — populate from a prior call to `GET /DIMENSION` or omit the field.
+**Implementation note:** The values endpoint returns HTTP 200 with an empty array for both unknown dimensions and unmatched parent filters. For an empty parent-filtered selection, the service checks the dimension metadata endpoint before asserting existence. A metadata outage propagates as a failure rather than an absence claim. Values use deterministic Code ordering; an offset past a nonempty selection returns an empty page.
 
 ### `who_list_dimensions`
 
@@ -334,7 +355,7 @@ https://ghoapi.azureedge.net/api/
 
 | SpatialDimType | Example values | When to use |
 |:---------------|:---------------|:------------|
-| `COUNTRY` | `JPN`, `USA`, `BRA` (ISO 3166-1 alpha-3) | Country-level data |
+| `COUNTRY` | `JPN`, `USA`, `BRA`, historical WHO codes | Country-level data |
 | `REGION` | `AFR`, `AMR`, `EMR`, `EUR`, `SEAR`, `WPR` | WHO regional aggregates |
 | `WORLDBANKINCOMEGROUP` | `WB_HI`, `WB_LMI`, `WB_LI`, `WB_UMI`, `WB_MI` | Income-group aggregates |
 | `GLOBAL` | `GLOBAL` | Global aggregate |
@@ -363,9 +384,9 @@ https://ghoapi.azureedge.net/api/
 
 **5. Resources are supplementary.** `who://indicator/{code}/metadata` and `who://dimension/{code}/values` cover the same data as two of the tools. Kept them because the data is stable (indicator metadata rarely changes), addressable by URI, and useful as injectable context. Tool coverage is primary.
 
-**6. Dim1 filter is applied optimistically.** The tool can't cheaply know whether an indicator uses SEX as Dim1 without a separate `/IndicatorDimension` call. Rather than forcing a two-step flow, the sex filter is applied as an OData `Dim1Type eq 'SEX' and Dim1 eq '...'` predicate. If the indicator doesn't use SEX as Dim1, the filter returns empty and the `truncatedNote` explains how to diagnose. Agents that call `who_get_indicator_metadata` first avoid this edge case entirely.
+**6. Filters do not require a metadata lookup.** The sex filter adds a Dim1 SEX predicate; positional filters select their corresponding values. A wrong position can yield no data, so callers inspect observation type/value pairs when they do not already know the layout. Metadata lists types without positions and may be absent for valid indicators.
 
-**7. `dim1_value` escape hatch — no `dim2_value`.** Real data shows AGEGROUP appears as `Dim2Type` when SEX is already `Dim1Type`. A `dim1_value` parameter handles the case where a non-SEX type occupies Dim1, but AGEGROUP filtering via Dim2 is intentionally left out of scope — filtering on `Dim2` requires knowing the indicator's Dim2 position from metadata first, and the multi-dim case is complex enough that callers should use `who_get_indicator_metadata` first and then apply no sex filter, relying on `limit` to cap results.
+**7. Three positional filters share the query path.** Age and cause dimensions can occur beyond Dim1, so `dim2_value` and `dim3_value` select discovered coordinates without fetching and discarding other strata client-side. Returned type/value pairs retain all three positions independently, including sparse rows.
 
 **8. PUBLISHSTATE filtered from metadata output.** The `/IndicatorDimension` endpoint returns `PUBLISHSTATE` as a dimension for many indicators. This is an internal publishing workflow dimension, not a data dimension callers can filter on in `who_query_indicator_data`. Strip it from `who_get_indicator_metadata` output to avoid confusing callers.
 
@@ -373,11 +394,11 @@ https://ghoapi.azureedge.net/api/
 
 ## Known Limitations
 
-- **No indicator theme/category navigation.** The `DIMENSION/GHO/DimensionValues` endpoint exists and returns all ~3,059 indicators as a flat list with `Code` and `Title` fields — but no `ParentCode`/`ParentTitle` hierarchy (all parent fields are null). Themes exist in the GHO web UI but the hierarchy is not exposed in this OData API. Keyword search via `who_search_indicators` is the only practical discovery path.
+- **No indicator theme/category navigation.** The `DIMENSION/GHO/DimensionValues` endpoint supplies a flat list with `Code` and `Title` fields rather than a theme hierarchy. Use indicator search or catalog browsing for discovery.
 - **Indicator codes are opaque.** Codes like `WHOSIS_000001` or `NCD_CCS_DiabetesTest` don't self-describe their domain. Agents must search by name.
 - **Cross-spatial queries require multiple calls.** Comparing a specific country to its WHO region aggregate requires two separate `who_query_indicator_data` calls.
-- **Subnational data absent.** Only country-level and aggregate (region/income group/global) data is in scope. Subnational breakdowns are not available in the OData API.
-- **Data currency varies by indicator.** Some indicators are updated annually; others lag by years. The `Date` field on each row indicates last update, but there's no API-level field for "data vintage" at the indicator level.
+- **No dedicated subnational filter.** Spatial filter parameters select country, WHO region, or World Bank income-group codes; the tools do not expose a dedicated subnational selector.
+- **Data currency varies by indicator.** Observation years describe the data period. The upstream `Date` field is not selected or exposed by the tools, so these responses cannot establish the last update timestamp.
 - **Empty body on 404.** When `GET /{IndicatorCode}` returns 404, the response body is empty. The service layer must detect the HTTP status rather than trying to parse a structured error.
 
 ---

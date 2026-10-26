@@ -28,6 +28,151 @@ describe('whoQueryIndicatorData', () => {
     vi.clearAllMocks();
   });
 
+  it('characterizes zero numeric values and two-sided zero bounds', () => {
+    const text = JSON.stringify(
+      whoQueryIndicatorData.format!({
+        rows: [{ indicatorCode: 'ZERO', numericValue: 0, low: 0, high: 0 }],
+      }),
+    );
+    expect(text).toContain('numeric=0');
+    expect(text).toContain('[0–0]');
+  });
+
+  it.each([1, 2, 3])(
+    'retains independent sparse dimension %i fields and one-sided bounds',
+    async (slot) => {
+      const rows = [
+        { indicatorCode: 'SPARSE', [`dim${slot}`]: `VALUE${slot}`, low: 0 },
+        { indicatorCode: 'SPARSE', [`dim${slot}Type`]: `TYPE${slot}`, high: 12 },
+        {
+          indicatorCode: 'SPARSE',
+          [`dim${slot}Type`]: `TYPE${slot}`,
+          [`dim${slot}`]: `VALUE${slot}`,
+        },
+      ];
+      mockService.queryData.mockResolvedValue({ rows, totalRows: 3, truncated: false });
+      const result = await runToolContract(whoQueryIndicatorData, { indicator_code: 'SPARSE' });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({ rows });
+      const text = result.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain(`Dim${slot}: VALUE${slot}`);
+      expect(text).toContain(`TYPE${slot}`);
+      expect(text).toContain('[low: 0]');
+      expect(text).toContain('[high: 12]');
+      expect(text).not.toContain('undefined');
+      expect(text).not.toContain('numeric=');
+    },
+  );
+
+  it('wires positional filters and composes empty, precedence and truncation notices', async () => {
+    mockService.queryData.mockResolvedValue({ rows: [sampleRow], totalRows: 3, truncated: true });
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      country_codes: [],
+      region_codes: [],
+      sex: 'SEX_FMLE',
+      dim1_value: 'IGNORED',
+      dim2_value: 'AGEGROUP_DAYS0-27',
+      dim3_value: 'CHILDCAUSE_CH9',
+      limit: 1,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(mockService.queryData.mock.calls[0]![0]).toMatchObject({
+      dim2Value: 'AGEGROUP_DAYS0-27',
+      dim3Value: 'CHILDCAUSE_CH9',
+    });
+    expect(mockService.queryData.mock.calls[0]![0]).not.toHaveProperty('dim1Value');
+    expect(result.structuredContent).toMatchObject({
+      appliedFilters: {
+        sex: 'SEX_FMLE',
+        dim2Value: 'AGEGROUP_DAYS0-27',
+        dim3Value: 'CHILDCAUSE_CH9',
+      },
+      truncated: true,
+      nextOffset: 1,
+    });
+    expect(
+      (result.structuredContent as { appliedFilters: object }).appliedFilters,
+    ).not.toHaveProperty('dim1Value');
+    for (const segment of [
+      'country_codes',
+      'region_codes',
+      'dim1_value',
+      'sex',
+      'Request offset 1',
+    ]) {
+      expect((result.structuredContent as { notice: string }).notice).toContain(segment);
+      expect(JSON.stringify(result.content)).toContain(segment);
+    }
+  });
+
+  it.each([
+    { offset: 0, truncated: false, missing: true },
+    { offset: 0, truncated: true, missing: false },
+    { offset: 1, truncated: false, missing: false },
+  ])(
+    'reports unmatched spatial codes only on a complete first page: %j',
+    async ({ offset, truncated, missing }) => {
+      mockService.queryData.mockResolvedValue({
+        rows: [sampleRow],
+        totalRows: truncated ? 3 : 1,
+        truncated,
+      });
+      const result = await runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        country_codes: ['jpn', 'NOT_REAL'],
+        offset,
+      });
+      const notice = (result.structuredContent as { notice?: string }).notice ?? '';
+      expect(notice.includes('unknown code or no data for these filters')).toBe(missing);
+      if (missing) {
+        expect(notice).toContain('NOT_REAL');
+        expect(notice).not.toContain('jpn');
+      }
+    },
+  );
+
+  it('ignores all empty dimension strings without echoing them', async () => {
+    mockService.queryData.mockResolvedValue({ rows: [sampleRow], totalRows: 1, truncated: false });
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      dim1_value: '',
+      dim2_value: '',
+      dim3_value: '',
+    });
+    const structured = result.structuredContent as { notice: string; appliedFilters: object };
+    for (const slot of [1, 2, 3]) {
+      expect(structured.notice).toContain(`dim${slot}_value`);
+      expect(structured.appliedFilters).not.toHaveProperty(`dim${slot}Value`);
+      expect(mockService.queryData.mock.calls[0]![0]).not.toHaveProperty(`dim${slot}Value`);
+    }
+  });
+
+  it('escapes upstream row values, effective filters and notices without changing structured values', async () => {
+    const value = '*literal* [label](https://example.com) <b>text</b> &copy;';
+    mockService.queryData.mockResolvedValue({
+      rows: [{ indicatorCode: value, comments: value }],
+      totalRows: 1,
+      truncated: false,
+    });
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: value,
+      country_codes: [value],
+    });
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ indicatorCode: value, comments: value }],
+      appliedFilters: { indicatorCode: value },
+    });
+    const text = result.content
+      .map((block) => (block.type === 'text' ? block.text : ''))
+      .join('\n');
+    expect(text).not.toContain(value);
+    expect(text).toContain('\\*literal\\*');
+    expect(text).toContain('\\<b>text\\</b>');
+  });
+
   it('returns data rows with enrichment for a valid query', async () => {
     mockService.queryData.mockResolvedValue({
       rows: [sampleRow],

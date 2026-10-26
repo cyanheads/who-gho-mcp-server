@@ -91,6 +91,12 @@ export interface IndicatorDimensionEntry {
   dimensionName: string;
 }
 
+/** Indicator identity resolved from the catalog or its dimension listing. */
+export interface IndicatorMetadata extends Indicator {
+  dimensions: IndicatorDimensionEntry[];
+  dimensionsNote?: string;
+}
+
 /** Normalized data row */
 export interface DataRow {
   comments?: string;
@@ -98,6 +104,8 @@ export interface DataRow {
   dim1Type?: string;
   dim2?: string;
   dim2Type?: string;
+  dim3?: string;
+  dim3Type?: string;
   displayValue?: string;
   high?: number;
   indicatorCode: string;
@@ -116,6 +124,8 @@ export interface DataRow {
 export interface DataQueryParams {
   countryCodes?: string[];
   dim1Value?: string;
+  dim2Value?: string;
+  dim3Value?: string;
   includeUncertainty: boolean;
   incomeGroupCodes?: string[];
   indicatorCode: string;

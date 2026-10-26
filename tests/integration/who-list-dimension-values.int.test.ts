@@ -35,6 +35,11 @@ const upstream = useGhoUpstream({
   match: (request) => request.url.startsWith(`${BASE}/DIMENSION/`),
   respond: (request) => {
     const url = new URL(request.url);
+    if (!url.pathname.endsWith('/DimensionValues')) {
+      return url.pathname.endsWith('/COUNTRY') || url.pathname.endsWith('/SEX')
+        ? Response.json({ Code: url.pathname.split('/').at(-1), Title: 'Dimension' })
+        : new Response('Not Found', { status: 404 });
+    }
     const dimension = decodeURIComponent(url.pathname.split('/').at(-2) ?? '');
     if (dimension !== 'COUNTRY') return odata([], 0);
     // Only EUR is stocked; any other parent filter is a filter that matched nothing.
@@ -47,7 +52,11 @@ const upstream = useGhoUpstream({
 
 /** Query params of the request the service just emitted. */
 const lastQuery = (): URLSearchParams =>
-  new URL(upstream.calls[upstream.calls.length - 1]!.request.url).searchParams;
+  new URL(
+    upstream.calls
+      .filter((call) => new URL(call.request.url).pathname.endsWith('/DimensionValues'))
+      .at(-1)!.request.url,
+  ).searchParams;
 
 toolContractSuite(whoListDimensionValues, {
   success: [
@@ -118,6 +127,12 @@ toolContractSuite(whoListDimensionValues, {
     },
   ],
   errors: [
+    {
+      name: 'rejects an unknown dimension even with a parent filter',
+      input: { dimension: 'NOTADIMENSION', parent_code: 'EUR' },
+      code: JsonRpcErrorCode.NotFound,
+      reason: 'dimension_not_found',
+    },
     {
       name: 'reports an unfiltered dimension lookup that returned nothing at all',
       input: { dimension: 'NOTADIMENSION' },

@@ -91,14 +91,14 @@ describe('whoDimensionValuesPageResource — input validation', () => {
     ).toThrow();
   });
 
-  it('rejects a limit above the ceiling', () => {
+  it('accepts a limit above the ceiling for bounded processing', () => {
     expect(() =>
       whoDimensionValuesPageResource.params!.parse({
         dimensionCode: 'COUNTRY',
         limit: '501',
         offset: '0',
       }),
-    ).toThrow();
+    ).not.toThrow();
   });
 });
 

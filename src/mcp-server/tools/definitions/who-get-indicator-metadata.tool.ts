@@ -5,46 +5,45 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
+import { getServerConfig } from '@/config/server-config.js';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { applyReadLimit } from '@/utils/read-limit.js';
 import { wellFormed } from '@/utils/well-formed.js';
-
-/**
- * Emitted for a code that resolves in the `Indicator` catalog but has no rows in the
- * `IndicatorDimension` table — the state ~1,300 of the 3,089 catalog indicators are in,
- * most of which still return data. Names the fallback route to the same information.
- */
-const DIMENSIONS_UNAVAILABLE =
-  'The GHO dimension table lists no dimensions for this indicator. The code is valid and may ' +
-  'still return data — call who_query_indicator_data for a sample row and read dim1Type and ' +
-  'dim2Type to see which dimensions it actually uses.';
 
 export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   title: 'Get WHO GHO Indicator Metadata',
   description:
-    'Fetch metadata for one or more WHO GHO indicator codes: the full indicator name and the dimensions ' +
-    'it supports (e.g. COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, AGEGROUP). ' +
-    'Call this before querying data with who_query_indicator_data to confirm which filter dimensions ' +
-    'are valid for a given indicator. Accepts up to 10 codes per call. ' +
-    'Many valid indicators have no dimension listing upstream — those return an empty dimensions ' +
-    'array with a dimensionsNote, not a not-found. Only codes absent from the catalog are ' +
-    'reported in the notFound array, and that is reported rather than raised as an error.',
+    'Fetch metadata for WHO GHO indicator codes: the canonical code, full name, and supported dimensions (e.g. COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, AGEGROUP). Call this before who_query_indicator_data to confirm valid filter dimensions. Processes the first 10 entries and returns unprocessedCodes to submit next, accepting at most 1000 raw entries. With GHO_CLAMP_LIMITS=false, calls above 10 reject. Many valid indicators have no dimension listing upstream — those return an empty dimensions array with dimensionsNote. Processed codes absent from both the catalog and dimension table appear in notFound. No found entries raises all_not_found only when no unprocessed entries remain.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_codes: z
       .array(z.string().min(1))
       .min(1)
-      .max(10)
-      .describe('One to ten indicator codes, e.g. ["WHOSIS_000001", "MDG_0000000026"].'),
+      .max(getServerConfig().clampLimits ? 1000 : 10)
+      .describe(
+        'Indicator codes, e.g. ["WHOSIS_000001", "MDG_0000000026"]. Processes the first ten and returns remaining entries for the next call; at most 1000 entries.',
+      ),
   }),
   output: z.object({
+    unprocessedCodes: z
+      .array(z.string())
+      .optional()
+      .describe('Remaining request entries in their original order. Submit these codes next.'),
     indicators: z
       .array(
         z
           .object({
-            indicatorCode: z.string().describe('Indicator code.'),
+            indicatorCode: z
+              .string()
+              .describe(
+                'Canonical catalog code when resolved; otherwise the requested dimension-only code.',
+              ),
             indicatorName: z
               .string()
-              .describe('Full indicator name as returned by the GHO catalog.'),
+              .describe(
+                'Decoded catalog name; the code itself when only dimension metadata resolves.',
+              ),
             dimensions: z
               .array(
                 z
@@ -61,21 +60,18 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
                   .describe('A dimension entry supported by this indicator.'),
               )
               .describe(
-                'Dimensions this indicator supports for filtering in who_query_indicator_data. ' +
-                  'Empty when the GHO dimension table lists none for this code — see dimensionsNote.',
+                'Dimensions this indicator supports for filtering in who_query_indicator_data. Empty when the GHO dimension table lists none for this code — see dimensionsNote.',
               ),
             dimensionsNote: z
               .string()
               .optional()
               .describe(
-                'Present only when dimensions is empty: explains that the listing is missing ' +
-                  'upstream rather than the indicator being absent, and how to recover the ' +
-                  'dimensions from a sample data row.',
+                'Present only when dimensions is empty: explains that the listing is missing upstream rather than the indicator being absent, and how to recover the dimensions from a sample data row.',
               ),
           })
           .describe('Metadata for one indicator.'),
       )
-      .describe('Metadata for each code that resolved to a catalog entry.'),
+      .describe('Metadata for each code that resolved to a catalog entry or dimension rows.'),
     notFound: z
       .array(z.string())
       .describe(
@@ -87,7 +83,7 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
     {
       reason: 'all_not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'No requested indicator code resolved to a catalog entry.',
+      when: 'No processed indicator code resolved and no unprocessed codes remain.',
       recovery:
         'Use who_search_indicators to find valid indicator codes matching your topic and retry.',
     },
@@ -96,56 +92,16 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   async handler(input, ctx) {
     ctx.log.info('Fetching indicator metadata', { codes: input.indicator_codes });
 
-    const svc = getGhoService();
-    // Fan out all lookups in parallel: dimension metadata + indicator names (exact code lookup)
-    const [dimMap, ...nameResults] = await Promise.all([
-      svc.getIndicatorDimensions(input.indicator_codes, ctx),
-      ...input.indicator_codes.map((code) =>
-        svc.listIndicators({ indicatorCode: code, limit: 1, offset: 0 }, ctx),
-      ),
-    ]);
-
-    // Build name map from search results
-    const nameMap = new Map<string, string>();
-    for (let i = 0; i < input.indicator_codes.length; i++) {
-      const code = input.indicator_codes[i];
-      const result = nameResults[i];
-      if (code && result) {
-        const match = result.indicators.find((ind) => ind.indicatorCode === code);
-        if (match) nameMap.set(code, match.indicatorName);
-      }
-    }
-
-    const found: Array<{
-      indicatorCode: string;
-      indicatorName: string;
-      dimensions: Array<{ dimension: string; dimensionName: string }>;
-      dimensionsNote?: string;
-    }> = [];
-    const notFound: string[] = [];
-
-    // Existence and dimension coverage are separate signals. A code is absent only when
-    // neither resolves; an empty dimension list on a code the catalog names is a gap in
-    // the upstream IndicatorDimension table, not a missing indicator.
-    for (const code of input.indicator_codes) {
-      const dims = dimMap.get(code) ?? [];
-      const name = nameMap.get(code);
-      // Both maps key on the code as received; what goes back into the response is the
-      // repaired copy, so an unpaired surrogate cannot reach the frame from either arm.
-      const echoedCode = wellFormed(code);
-      if (dims.length === 0 && name === undefined) {
-        notFound.push(echoedCode);
-        continue;
-      }
-      found.push({
-        indicatorCode: echoedCode,
-        indicatorName: name ?? echoedCode,
-        dimensions: dims,
-        ...(dims.length === 0 && { dimensionsNote: DIMENSIONS_UNAVAILABLE }),
-      });
-    }
-
-    if (found.length === 0) {
+    const { limit } = applyReadLimit(
+      input.indicator_codes.length,
+      10,
+      'who_get_indicator_metadata',
+      ctx,
+    );
+    const processedCodes = input.indicator_codes.slice(0, limit);
+    const unprocessedCodes = input.indicator_codes.slice(limit).map(wellFormed);
+    const result = await getGhoService().getIndicatorMetadata(processedCodes, ctx);
+    if (result.indicators.length === 0 && unprocessedCodes.length === 0) {
       throw ctx.fail(
         'all_not_found',
         'None of the requested indicator codes resolved to a GHO catalog entry.',
@@ -153,23 +109,31 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
       );
     }
 
-    return { indicators: found, notFound };
+    return { ...result, ...(unprocessedCodes.length > 0 && { unprocessedCodes }) };
   },
 
   format: (result) => {
     const lines: string[] = [];
     for (const ind of result.indicators) {
-      lines.push(`## ${ind.indicatorCode}: ${ind.indicatorName}`);
+      lines.push(
+        `**${escapeMarkdownInline(ind.indicatorCode)}:** ${escapeMarkdownInline(ind.indicatorName)}`,
+      );
       lines.push(
         ind.dimensions.length > 0
-          ? `**Dimensions:** ${ind.dimensions.map((d) => `${d.dimension} (${d.dimensionName})`).join(', ')}`
+          ? `**Dimensions:** ${ind.dimensions.map((d) => `${escapeMarkdownInline(d.dimension)} (${escapeMarkdownInline(d.dimensionName)})`).join(', ')}`
           : '**Dimensions:** none listed',
       );
-      if (ind.dimensionsNote) lines.push(`**dimensionsNote:** ${ind.dimensionsNote}`);
+      if (ind.dimensionsNote !== undefined)
+        lines.push(`**dimensionsNote:** ${escapeMarkdownInline(ind.dimensionsNote)}`);
       lines.push('');
     }
     if (result.notFound.length > 0) {
-      lines.push(`**Not found:** ${result.notFound.join(', ')}`);
+      lines.push(`**Not found:** ${result.notFound.map(escapeMarkdownInline).join(', ')}`);
+    }
+    if (result.unprocessedCodes !== undefined) {
+      lines.push(
+        `**Unprocessed codes:** ${result.unprocessedCodes.map(escapeMarkdownInline).join(', ')}. Submit these codes next; only the first 10 entries were processed.`,
+      );
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];
   },

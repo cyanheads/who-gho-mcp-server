@@ -1,6 +1,6 @@
 # who-gho-mcp-server - Directory Structure
 
-Generated on: 2026-10-09 07:33:16
+Generated on: 2026-10-26 07:03:57
 
 ```text
 who-gho-mcp-server/
@@ -39,6 +39,8 @@ who-gho-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -137,6 +139,9 @@ who-gho-mcp-server/
 │   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
+├── skills/
+│   └── who-gho-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -157,12 +162,17 @@ who-gho-mcp-server/
 │   │           └── who-search-indicators.tool.ts
 │   ├── services/
 │   │   └── gho/
+│   │       ├── decode-indicator-name.ts
 │   │       ├── gho-service.ts
 │   │       └── types.ts
 │   ├── utils/
+│   │   ├── read-limit.ts
 │   │   └── well-formed.ts
 │   └── index.ts
 ├── tests/
+│   ├── config/
+│   │   ├── limit-config.test.ts
+│   │   └── schema-probe.ts
 │   ├── fuzz/
 │   │   └── who-tools.fuzz.test.ts
 │   ├── integration/
@@ -179,12 +189,17 @@ who-gho-mcp-server/
 │   │   ├── who-dimension-values.resource.test.ts
 │   │   ├── who-indicator-metadata-extended.resource.test.ts
 │   │   └── who-indicator-metadata.resource.test.ts
+│   ├── scripts/
+│   │   └── mcpb-skills.test.ts
 │   ├── services/
 │   │   └── gho/
 │   │       └── gho-service.test.ts
 │   ├── smoke/
 │   │   └── definitions.smoke.test.ts
 │   ├── tools/
+│   │   ├── discovery-contract.test.ts
+│   │   ├── limit-continuation.test.ts
+│   │   ├── read-limit.test.ts
 │   │   ├── who-get-indicator-metadata-extended.tool.test.ts
 │   │   ├── who-get-indicator-metadata.tool.test.ts
 │   │   ├── who-list-dimension-values-extended.tool.test.ts
@@ -216,7 +231,9 @@ who-gho-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json

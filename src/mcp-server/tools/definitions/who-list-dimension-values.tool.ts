@@ -5,42 +5,31 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { applyReadLimit, readLimitSchema } from '@/utils/read-limit.js';
 import { wellFormed } from '@/utils/well-formed.js';
 
 export const whoListDimensionValues = tool('who_list_dimension_values', {
   title: 'List GHO Dimension Values',
   description:
-    'List valid codes and labels for a WHO GHO dimension type such as COUNTRY, REGION, SEX, ' +
-    'WORLDBANKINCOMEGROUP, or AGEGROUP. Use this to discover valid filter values before calling ' +
-    'who_query_indicator_data, or to confirm the correct ISO code for a country. ' +
-    'Use who_list_dimensions to discover all available dimension type codes. ' +
-    'Results are paged in a deterministic order — narrow hierarchical dimensions with parent_code ' +
-    '(e.g. the countries in one WHO region), and page the rest with offset.',
+    'List valid codes and labels for a WHO GHO dimension type such as COUNTRY, REGION, SEX, WORLDBANKINCOMEGROUP, or AGEGROUP. Use this to discover valid filter values before calling who_query_indicator_data, or to confirm the WHO code for a country, including historical codes. Use who_list_dimensions to discover all available dimension type codes. Results are paged in a deterministic order — narrow hierarchical dimensions with parent_code (e.g. the countries in one WHO region), and page the rest with offset.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     dimension: z
       .string()
       .min(1)
       .describe(
-        'Dimension type code. Use who_list_dimensions to discover all available codes. ' +
-          'Common values: COUNTRY, REGION, SEX, WORLDBANKINCOMEGROUP, AGEGROUP.',
+        'Dimension type code. Use who_list_dimensions to discover all available codes. Common values: COUNTRY, REGION, SEX, WORLDBANKINCOMEGROUP, AGEGROUP.',
       ),
     parent_code: z
       .string()
       .min(1)
       .optional()
       .describe(
-        'Restrict results to values under one parent, e.g. dimension="COUNTRY" with ' +
-          'parent_code="EUR" for the countries in the WHO European Region. ' +
-          'Only hierarchical dimensions carry a parent; a filter that matches nothing returns ' +
-          'an empty page, not an error.',
+        'Restrict results to values under one parent, e.g. dimension="COUNTRY" with parent_code="EUR" for the countries in the WHO European Region. Only hierarchical dimensions carry a parent; a filter that matches nothing returns an empty page for a valid dimension, not an error.',
       ),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(500)
+    limit: readLimitSchema(500)
       .default(100)
       .describe('Number of values to return per page. Default 100, max 500.'),
     offset: z
@@ -49,9 +38,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       .min(0)
       .default(0)
       .describe(
-        'Zero-based offset into the values for this dimension and filter. Default 0. Read ' +
-          'hasMore and nextOffset from the response to continue paging. An offset at or beyond ' +
-          'totalCount returns an empty values array, not an error.',
+        'Zero-based offset into the values for this dimension and filter. Default 0. Read hasMore and nextOffset from the response to continue paging. An offset at or beyond totalCount returns an empty values array, not an error.',
       ),
   }),
   output: z.object({
@@ -112,11 +99,15 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       ),
   },
 
+  enrichmentTrailer: {
+    notice: { render: (value: string) => escapeMarkdownInline(value) },
+  },
+
   errors: [
     {
       reason: 'dimension_not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'An unfiltered lookup of the dimension code returned no values at all — it does not exist in the GHO catalog.',
+      when: 'An unfiltered lookup returned no values, or a filtered empty result was confirmed absent by the dimension metadata endpoint.',
       recovery:
         'Use who_list_dimensions to discover valid dimension type codes and retry with a correct code.',
     },
@@ -130,6 +121,12 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
   ],
 
   async handler(input, ctx) {
+    const { limit, notice: clampNotice } = applyReadLimit(
+      input.limit,
+      500,
+      'who_list_dimension_values',
+      ctx,
+    );
     ctx.log.info('Fetching dimension values', {
       dimension: input.dimension,
       limit: input.limit,
@@ -146,7 +143,7 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
       .listDimensionValues(
         {
           dimensionCode: input.dimension,
-          limit: input.limit,
+          limit,
           offset: input.offset,
           ...(input.parent_code && { parentCode: input.parent_code }),
         },
@@ -157,6 +154,12 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
         // field. The rejected code is left out of the failure data on purpose: it is
         // the caller's own unpaired surrogate, and echoing it puts it back on the wire.
         const reason = (err as { data?: { reason?: string } } | null)?.data?.reason;
+        if (reason === 'dimension_not_found') {
+          throw ctx.fail(
+            'dimension_not_found',
+            `Dimension "${echoedDimension}" does not exist in the GHO catalog.`,
+          );
+        }
         if (reason === 'malformed_identifier') {
           throw ctx.fail(
             'malformed_identifier',
@@ -166,10 +169,8 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
         throw err;
       });
 
-    // The upstream answers an unknown dimension and a filter that matched nothing
-    // identically — HTTP 200 with an empty array — so only an unfiltered empty result
-    // may claim the dimension does not exist. Paging past the end is a third case: it
-    // matched `total` values and asked for a slice beyond them.
+    // The service verifies existence for filtered zero-total results. An unfiltered
+    // empty result still identifies an unknown dimension; past-end pages retain total.
     if (total === 0 && !input.parent_code) {
       throw ctx.fail(
         'dimension_not_found',
@@ -190,35 +191,42 @@ export const whoListDimensionValues = tool('who_list_dimension_values', {
     });
 
     // `notice` is last-wins — compose the applicable segment and write it once.
+    const notices = clampNotice ? [clampNotice] : [];
     if (pastEnd) {
-      ctx.enrich.notice(
-        `Offset ${input.offset} is at or beyond the ${total} values matching this request; ` +
-          `the last reachable offset is ${total - 1}.`,
+      notices.push(
+        `Offset ${input.offset} is at or beyond the ${total} values matching this request; the last reachable offset is ${total - 1}.`,
       );
     } else if (total === 0) {
-      ctx.enrich.notice(
-        `No values in dimension "${echoedDimension}" have parent_code "${echoedParentCode}". ` +
-          'The dimension exists; the filter matched nothing. Drop parent_code to list every ' +
-          'value, or use who_list_dimension_values on the parent dimension to find a valid code.',
+      notices.push(
+        `No values in dimension "${echoedDimension}" have parent_code "${echoedParentCode}". The dimension exists; the filter matched nothing. Drop parent_code to list every value, or use who_list_dimension_values on the parent dimension to find a valid code.`,
       );
     } else if (hasMore) {
-      ctx.enrich.notice(
-        `Showing ${values.length} of ${total} values (offset ${input.offset}). ` +
-          `Request offset ${nextOffset} for the next page, raise the limit (max 500), ` +
-          'or narrow the results with parent_code.',
+      notices.push(
+        `Showing ${values.length} of ${total} values (offset ${input.offset}). Request offset ${nextOffset} for the next page, raise the limit (max 500), or narrow the results with parent_code.`,
       );
     }
 
+    if (notices.length) ctx.enrich.notice(notices.join(' '));
     return { dimension: echoedDimension, values };
   },
 
   format: (result) => {
-    const lines = [`**Dimension: ${result.dimension}** (${result.values.length} values)`, ''];
+    const lines = [
+      `**Dimension: ${escapeMarkdownInline(result.dimension)}** (${result.values.length} values)`,
+      '',
+    ];
     for (const v of result.values) {
-      const parentCode = v.parentCode ? ` parentCode=${v.parentCode}` : '';
-      const parentLabel = v.parentLabel ? ` parentLabel=${v.parentLabel}` : '';
-      const parentDimension = v.parentDimension ? ` parentDimension=${v.parentDimension}` : '';
-      lines.push(`- **${v.code}**: ${v.label}${parentCode}${parentLabel}${parentDimension}`);
+      const parentCode =
+        v.parentCode !== undefined ? ` parentCode=${escapeMarkdownInline(v.parentCode)}` : '';
+      const parentLabel =
+        v.parentLabel !== undefined ? ` parentLabel=${escapeMarkdownInline(v.parentLabel)}` : '';
+      const parentDimension =
+        v.parentDimension !== undefined
+          ? ` parentDimension=${escapeMarkdownInline(v.parentDimension)}`
+          : '';
+      lines.push(
+        `- **${escapeMarkdownInline(v.code)}**: ${escapeMarkdownInline(v.label)}${parentCode}${parentLabel}${parentDimension}`,
+      );
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },

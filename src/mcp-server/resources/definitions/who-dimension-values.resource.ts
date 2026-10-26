@@ -8,6 +8,7 @@
 import { type Context, resource, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getGhoService } from '@/services/gho/gho-service.js';
+import { applyReadLimit, readLimitSchema } from '@/utils/read-limit.js';
 import { wellFormed } from '@/utils/well-formed.js';
 
 /** Page size applied when the URI carries no explicit limit. Matches the tool's default. */
@@ -18,12 +19,9 @@ const dimensionCodeParam = z
   .describe('Dimension type code, e.g. "COUNTRY", "REGION", "SEX", "WORLDBANKINCOMEGROUP".');
 
 /** URI template variables arrive as strings, so numeric ones are coerced. */
-const limitParam = z.coerce
-  .number()
-  .int()
-  .min(1)
-  .max(500)
-  .describe('Number of values to return for this page, 1–500.');
+const limitParam = readLimitSchema(500, true).describe(
+  'Number of values to return for this page, 1–500.',
+);
 
 const offsetParam = z.coerce
   .number()
@@ -69,15 +67,20 @@ const outputSchema = z.object({
 });
 
 /**
- * Reads one page of dimension values, separating the three empty-result causes the
- * upstream reports identically (HTTP 200 with an empty array): an unknown dimension,
- * a filter that matched nothing, and an offset past the end of a non-empty set.
+ * Reads one page after the service verifies filtered zero-total dimensions exist;
+ * unfiltered empty results and past-end pages retain their distinct outcomes.
  */
 async function readPage(
   params: { dimensionCode: string; limit: number; offset: number; parentCode?: string },
   ctx: Context,
 ): Promise<z.infer<typeof outputSchema>> {
-  const { values, total } = await getGhoService().listDimensionValues(params, ctx);
+  const { limit, notice: clampNotice } = applyReadLimit(
+    params.limit,
+    500,
+    'who_dimension_values',
+    ctx,
+  );
+  const { values, total } = await getGhoService().listDimensionValues({ ...params, limit }, ctx);
 
   // Echo copies for the payload. `dimensionCode` reaches a URL path segment, where the
   // service refuses an unpaired surrogate outright, so only `parentCode` can carry one
@@ -99,19 +102,14 @@ async function readPage(
 
   let notice: string | undefined;
   if (pastEnd) {
-    notice =
-      `Offset ${params.offset} is at or beyond the ${total} values matching this request; ` +
-      `the last reachable offset is ${total - 1}.`;
+    notice = `Offset ${params.offset} is at or beyond the ${total} values matching this request; the last reachable offset is ${total - 1}.`;
   } else if (total === 0) {
-    notice =
-      `No values in dimension "${echoedDimension}" have parentCode "${echoedParent}". ` +
-      'The dimension exists; the filter matched nothing. Read the unfiltered URI to list every value.';
+    notice = `No values in dimension "${echoedDimension}" have parentCode "${echoedParent}". The dimension exists; the filter matched nothing. Read the unfiltered URI to list every value.`;
   } else if (hasMore) {
-    notice =
-      `Showing ${values.length} of ${total} values (offset ${params.offset}). ` +
-      `Read the same URI with offset ${nextOffset} for the next page.`;
+    notice = `Showing ${values.length} of ${total} values (offset ${params.offset}). Read the same URI with offset ${nextOffset} for the next page.`;
   }
 
+  notice = [clampNotice, notice].filter(Boolean).join(' ') || undefined;
   return {
     dimension: echoedDimension,
     values,
@@ -124,9 +122,7 @@ async function readPage(
 }
 
 const sharedDescription =
-  'One page of valid values for a WHO GHO dimension type, in a deterministic order. ' +
-  'Useful as injectable context when building queries with who_query_indicator_data. ' +
-  'Use who_list_dimensions to discover valid dimension type codes.';
+  'One page of valid values for a WHO GHO dimension type, in a deterministic order. Useful as injectable context when building queries with who_query_indicator_data. Use who_list_dimensions to discover valid dimension type codes.';
 
 export const whoDimensionValuesResource = resource('who://dimension/{dimensionCode}/values', {
   name: 'who-dimension-values',
@@ -163,7 +159,7 @@ export const whoDimensionValuesByParentResource = resource(
   'who://dimension/{dimensionCode}/values{?limit,offset,parentCode}',
   {
     name: 'who-dimension-values-by-parent',
-    description: `${sharedDescription} Narrowed to one parent code; limit, offset, and parentCode must all be present in the URI. A filter that matches nothing returns an empty page, not an error.`,
+    description: `${sharedDescription} Narrowed to one parent code; limit, offset, and parentCode must all be present in the URI. A filter that matches nothing returns an empty page for a valid dimension; an unknown dimension returns not-found.`,
     mimeType: 'application/json',
     params: z.object({
       dimensionCode: dimensionCodeParam,

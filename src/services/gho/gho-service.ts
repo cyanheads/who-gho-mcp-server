@@ -15,6 +15,8 @@ import {
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { httpErrorFromResponse, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig } from '@/config/server-config.js';
+import { wellFormed } from '@/utils/well-formed.js';
+import { decodeIndicatorName } from './decode-indicator-name.js';
 import type {
   DataQueryParams,
   DataRow,
@@ -22,6 +24,7 @@ import type {
   DimensionValue,
   Indicator,
   IndicatorDimensionEntry,
+  IndicatorMetadata,
   ODataEnvelope,
   RawDataRow,
   RawDimension,
@@ -32,6 +35,9 @@ import type {
 
 /** Dimensions that are internal publishing workflow states, not user-filterable data dimensions. */
 const INTERNAL_DIMENSIONS = new Set(['PUBLISHSTATE']);
+
+const DIMENSIONS_UNAVAILABLE =
+  'The GHO dimension table lists no dimensions for this indicator. The code is valid and may still return data — call who_query_indicator_data for a sample row and read dim1Type, dim2Type, and dim3Type to see which dimensions it actually uses.';
 
 export class GhoService {
   private readonly baseUrl: string;
@@ -49,46 +55,68 @@ export class GhoService {
     params: { query?: string; indicatorCode?: string; limit: number; offset: number },
     ctx: Context,
   ): Promise<{ indicators: Indicator[]; total: number }> {
-    return withRetry(
-      async () => {
-        const qs = new URLSearchParams({
-          $top: String(params.limit),
-          $skip: String(params.offset),
-          $count: 'true',
-          // Offset paging is only sound over a guaranteed order; the catalog's
-          // unique key pins it by contract rather than by observed upstream behavior.
-          $orderby: 'IndicatorCode',
-        });
-        if (params.indicatorCode) {
-          // Exact match by code — codes are not substrings of names, so contains() fails here.
-          qs.set('$filter', `IndicatorCode eq '${this.escapeODataString(params.indicatorCode)}'`);
-        } else if (params.query) {
-          qs.set('$filter', `contains(IndicatorName,'${this.escapeODataString(params.query)}')`);
-        }
-        const url = `${this.baseUrl}/Indicator?${qs}`;
-        const data = await this.getJson<ODataEnvelope<RawIndicator>>(url, ctx);
-        return {
-          indicators: data.value.map((r) => ({
-            indicatorCode: r.IndicatorCode,
-            indicatorName: r.IndicatorName,
-          })),
-          total: data['@odata.count'] ?? data.value.length,
-        };
-      },
-      { context: ctx, operation: 'GhoService.listIndicators', signal: ctx.signal },
-    );
+    return this.retry(ctx, 'GhoService.listIndicators', async (signal) => {
+      const qs = new URLSearchParams({
+        $top: String(params.limit),
+        $skip: String(params.offset),
+        $count: 'true',
+        // Offset paging is only sound over a guaranteed order; the catalog's
+        // unique key pins it by contract rather than by observed upstream behavior.
+        $orderby: 'IndicatorCode',
+      });
+      if (params.indicatorCode) {
+        // Exact match by code — codes are not substrings of names, so contains() fails here.
+        qs.set('$filter', `IndicatorCode eq '${this.escapeODataString(params.indicatorCode)}'`);
+      } else if (params.query !== undefined) {
+        const tokens = params.query.trim().split(/\s+/).filter(Boolean);
+        if (tokens.length === 0)
+          throw validationError(
+            'Search query must contain at least one word. Supply a topic or indicator code.',
+          );
+        qs.set(
+          '$filter',
+          tokens
+            .map((token) => {
+              const literal = `contains(IndicatorName,'${this.escapeODataString(token)}')`;
+              const encoded = token.replaceAll('&', '&amp;');
+              return encoded === token
+                ? literal
+                : `(${literal} or contains(IndicatorName,'${this.escapeODataString(encoded)}'))`;
+            })
+            .join(' and '),
+        );
+      }
+      const url = `${this.baseUrl}/Indicator?${qs}`;
+      let data = await this.getJson<ODataEnvelope<RawIndicator>>(url, ctx, signal);
+      if (
+        !params.indicatorCode &&
+        params.query !== undefined &&
+        (data['@odata.count'] ?? data.value.length) === 0
+      ) {
+        qs.set('$filter', `IndicatorCode eq '${this.escapeODataString(params.query.trim())}'`);
+        data = await this.getJson<ODataEnvelope<RawIndicator>>(
+          `${this.baseUrl}/Indicator?${qs}`,
+          ctx,
+          signal,
+        );
+      }
+      return {
+        indicators: data.value.map((r) => ({
+          indicatorCode: r.IndicatorCode,
+          indicatorName: decodeIndicatorName(r.IndicatorName),
+        })),
+        total: data['@odata.count'] ?? data.value.length,
+      };
+    });
   }
 
   /** Fetch all dimension type codes and titles. */
   listDimensions(ctx: Context): Promise<Dimension[]> {
-    return withRetry(
-      async () => {
-        const url = `${this.baseUrl}/DIMENSION`;
-        const data = await this.getJson<ODataEnvelope<RawDimension>>(url, ctx);
-        return data.value.map((d) => ({ code: d.Code, title: d.Title }));
-      },
-      { context: ctx, operation: 'GhoService.listDimensions', signal: ctx.signal },
-    );
+    return this.retry(ctx, 'GhoService.listDimensions', async (signal) => {
+      const url = `${this.baseUrl}/DIMENSION`;
+      const data = await this.getJson<ODataEnvelope<RawDimension>>(url, ctx, signal);
+      return data.value.map((d) => ({ code: d.Code, title: d.Title }));
+    });
   }
 
   /**
@@ -101,42 +129,54 @@ export class GhoService {
     params: { dimensionCode: string; limit: number; offset: number; parentCode?: string },
     ctx: Context,
   ): Promise<{ values: DimensionValue[]; total: number }> {
-    return withRetry(
-      async () => {
-        const qs = new URLSearchParams({
-          $top: String(params.limit),
-          $skip: String(params.offset),
-          $count: 'true',
-          // Offset paging is only sound over a guaranteed order. Code is unique and
-          // non-null across every GHO dimension, so it is a total order on its own.
-          $orderby: 'Code',
-        });
-        if (params.parentCode) {
-          qs.set('$filter', `ParentCode eq '${this.escapeODataString(params.parentCode)}'`);
-        }
-        const url = `${this.baseUrl}/DIMENSION/${this.encodePathSegment(params.dimensionCode, 'dimensionCode')}/DimensionValues?${qs}`;
-        const data = await this.getJson<ODataEnvelope<RawDimensionValue>>(url, ctx);
-        return {
-          values: data.value.map((v) => ({
-            code: v.Code,
-            label: v.Title,
-            ...(v.ParentCode && { parentCode: v.ParentCode }),
-            ...(v.ParentTitle && { parentLabel: v.ParentTitle }),
-            ...(v.ParentDimension && { parentDimension: v.ParentDimension }),
-          })),
-          total: data['@odata.count'] ?? data.value.length,
-        };
-      },
-      { context: ctx, operation: 'GhoService.listDimensionValues', signal: ctx.signal },
-    );
+    return this.retry(ctx, 'GhoService.listDimensionValues', async (signal) => {
+      const qs = new URLSearchParams({
+        $top: String(params.limit),
+        $skip: String(params.offset),
+        $count: 'true',
+        // Offset paging is only sound over a guaranteed order. Code is unique and
+        // non-null across every GHO dimension, so it is a total order on its own.
+        $orderby: 'Code',
+      });
+      if (params.parentCode) {
+        qs.set('$filter', `ParentCode eq '${this.escapeODataString(params.parentCode)}'`);
+      }
+      const dimensionUrl = `${this.baseUrl}/DIMENSION/${this.encodePathSegment(params.dimensionCode, 'dimensionCode')}`;
+      const data = await this.getJson<ODataEnvelope<RawDimensionValue>>(
+        `${dimensionUrl}/DimensionValues?${qs}`,
+        ctx,
+        signal,
+      );
+      const total = data['@odata.count'] ?? data.value.length;
+      if (params.parentCode && total === 0) {
+        const metadata = await this.fetchRaw(dimensionUrl, ctx, signal);
+        if (metadata.status === 404)
+          throw notFound(
+            `Dimension "${wellFormed(params.dimensionCode)}" not found in the GHO catalog.`,
+            { reason: 'dimension_not_found', dimension: wellFormed(params.dimensionCode) },
+          );
+        if (!metadata.ok) throw await this.httpError(metadata, dimensionUrl, ctx);
+        await this.parseJsonBody<RawDimension>(metadata, signal);
+      }
+      return {
+        values: data.value.map((v) => ({
+          code: v.Code,
+          label: v.Title,
+          ...(v.ParentCode && { parentCode: v.ParentCode }),
+          ...(v.ParentTitle && { parentLabel: v.ParentTitle }),
+          ...(v.ParentDimension && { parentDimension: v.ParentDimension }),
+        })),
+        total,
+      };
+    });
   }
 
   /**
    * Fetch dimension metadata for multiple indicator codes in parallel.
    * Returns a map of code → dimensions carrying an entry for every requested code; an
    * empty array means the upstream `IndicatorDimension` table holds no rows for it.
-   * Roughly 1,300 of the 3,089 catalog indicators are in that state and most of them
-   * still carry data, so an empty array says nothing about whether the code exists —
+   * Many catalog indicators are in that state and still carry data, so an empty
+   * array says nothing about whether the code exists —
    * callers resolve existence from the `Indicator` catalog instead.
    */
   async getIndicatorDimensions(
@@ -145,21 +185,18 @@ export class GhoService {
   ): Promise<Map<string, IndicatorDimensionEntry[]>> {
     const results = await Promise.all(
       indicatorCodes.map(async (code) => {
-        const dims = await withRetry(
-          async () => {
+        const dims = await this.retry(
+          ctx,
+          `GhoService.getIndicatorDimensions(${code})`,
+          async (signal) => {
             const qs = new URLSearchParams({
               $filter: `IndicatorCode eq '${this.escapeODataString(code)}'`,
             });
             const url = `${this.baseUrl}/IndicatorDimension?${qs}`;
-            const data = await this.getJson<ODataEnvelope<RawIndicatorDimension>>(url, ctx);
+            const data = await this.getJson<ODataEnvelope<RawIndicatorDimension>>(url, ctx, signal);
             return data.value
               .filter((d) => !INTERNAL_DIMENSIONS.has(d.Dimension))
               .map((d) => ({ dimension: d.Dimension, dimensionName: d.DimensionName }));
-          },
-          {
-            context: ctx,
-            operation: `GhoService.getIndicatorDimensions(${code})`,
-            signal: ctx.signal,
           },
         );
         return [code, dims] as const;
@@ -168,119 +205,155 @@ export class GhoService {
     return new Map<string, IndicatorDimensionEntry[]>(results);
   }
 
+  /** Resolve both identity signals in parallel, retaining requested order and original missing-code echoes. */
+  async getIndicatorMetadata(
+    indicatorCodes: string[],
+    ctx: Context,
+  ): Promise<{ indicators: IndicatorMetadata[]; notFound: string[] }> {
+    const [dimensionMap, ...catalogs] = await Promise.all([
+      this.getIndicatorDimensions(indicatorCodes, ctx),
+      ...indicatorCodes.map(async (code) => ({
+        code,
+        ...(await this.listIndicators({ indicatorCode: code, limit: 1, offset: 0 }, ctx)),
+      })),
+    ]);
+    const indicators: IndicatorMetadata[] = [];
+    const missing: string[] = [];
+    for (const { code, indicators: catalogEntries } of catalogs) {
+      const dimensions = dimensionMap.get(code) as IndicatorDimensionEntry[];
+      const catalog = catalogEntries.find(
+        (entry) => entry.indicatorCode.toLowerCase() === wellFormed(code).toLowerCase(),
+      );
+      if (!catalog && dimensions.length === 0) {
+        missing.push(wellFormed(code));
+        continue;
+      }
+      indicators.push({
+        indicatorCode: catalog?.indicatorCode ?? wellFormed(code),
+        indicatorName: catalog?.indicatorName ?? wellFormed(code),
+        dimensions,
+        ...(dimensions.length === 0 && { dimensionsNote: DIMENSIONS_UNAVAILABLE }),
+      });
+    }
+    return { indicators, notFound: missing };
+  }
+
   /** Query data rows for an indicator with optional OData filters. */
   queryData(
     params: DataQueryParams,
     ctx: Context,
   ): Promise<{ rows: DataRow[]; totalRows: number; truncated: boolean }> {
-    return withRetry(
-      async () => {
-        const filterParts: string[] = [];
+    return this.retry(ctx, 'GhoService.queryData', async (signal) => {
+      const filterParts: string[] = [];
 
-        // Spatial filter: at most one of country/region/income group
-        if (params.countryCodes?.length) {
-          const codes = params.countryCodes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
-          filterParts.push(`SpatialDimType eq 'COUNTRY' and SpatialDim in (${codes})`);
-        } else if (params.regionCodes?.length) {
-          const codes = params.regionCodes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
-          filterParts.push(`SpatialDimType eq 'REGION' and SpatialDim in (${codes})`);
-        } else if (params.incomeGroupCodes?.length) {
-          const codes = params.incomeGroupCodes
-            .map((c) => `'${this.escapeODataString(c)}'`)
-            .join(',');
-          filterParts.push(`SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in (${codes})`);
-        }
+      // Spatial filter: at most one of country/region/income group
+      if (params.countryCodes?.length) {
+        const codes = params.countryCodes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
+        filterParts.push(`SpatialDimType eq 'COUNTRY' and SpatialDim in (${codes})`);
+      } else if (params.regionCodes?.length) {
+        const codes = params.regionCodes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
+        filterParts.push(`SpatialDimType eq 'REGION' and SpatialDim in (${codes})`);
+      } else if (params.incomeGroupCodes?.length) {
+        const codes = params.incomeGroupCodes
+          .map((c) => `'${this.escapeODataString(c)}'`)
+          .join(',');
+        filterParts.push(`SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in (${codes})`);
+      }
 
-        // Year range
-        if (params.yearFrom != null) filterParts.push(`TimeDim ge ${params.yearFrom}`);
-        if (params.yearTo != null) filterParts.push(`TimeDim le ${params.yearTo}`);
+      // Year range
+      if (params.yearFrom != null) filterParts.push(`TimeDim ge ${params.yearFrom}`);
+      if (params.yearTo != null) filterParts.push(`TimeDim le ${params.yearTo}`);
 
-        // Dim1 filter: sex takes precedence, then arbitrary dim1_value
-        if (params.sex) {
-          filterParts.push(`Dim1Type eq 'SEX' and Dim1 eq '${this.escapeODataString(params.sex)}'`);
-        } else if (params.dim1Value) {
-          filterParts.push(`Dim1 eq '${this.escapeODataString(params.dim1Value)}'`);
-        }
+      // Dim1 filter: sex takes precedence, then arbitrary dim1_value
+      if (params.sex) {
+        filterParts.push(`Dim1Type eq 'SEX' and Dim1 eq '${this.escapeODataString(params.sex)}'`);
+      } else if (params.dim1Value) {
+        filterParts.push(`Dim1 eq '${this.escapeODataString(params.dim1Value)}'`);
+      }
+      if (params.dim2Value)
+        filterParts.push(`Dim2 eq '${this.escapeODataString(params.dim2Value)}'`);
+      if (params.dim3Value)
+        filterParts.push(`Dim3 eq '${this.escapeODataString(params.dim3Value)}'`);
 
-        // Field selection
-        const selectFields = [
-          'IndicatorCode',
-          'SpatialDimType',
-          'SpatialDim',
-          'TimeDim',
-          'ParentLocation',
-          'ParentLocationCode',
-          'Dim1Type',
-          'Dim1',
-          'Dim2Type',
-          'Dim2',
-          'NumericValue',
-          'Value',
-          'Comments',
-          ...(params.includeUncertainty ? ['Low', 'High'] : []),
-        ];
+      // Field selection
+      const selectFields = [
+        'IndicatorCode',
+        'SpatialDimType',
+        'SpatialDim',
+        'TimeDim',
+        'ParentLocation',
+        'ParentLocationCode',
+        'Dim1Type',
+        'Dim1',
+        'Dim2Type',
+        'Dim2',
+        'Dim3Type',
+        'Dim3',
+        'NumericValue',
+        'Value',
+        'Comments',
+        ...(params.includeUncertainty ? ['Low', 'High'] : []),
+      ];
 
-        const qs = new URLSearchParams({
-          $top: String(params.limit),
-          $skip: String(params.offset),
-          $count: 'true',
-          $select: selectFields.join(','),
-          $orderby: params.orderBy,
+      const qs = new URLSearchParams({
+        $top: String(params.limit),
+        $skip: String(params.offset),
+        $count: 'true',
+        $select: selectFields.join(','),
+        $orderby: params.orderBy,
+      });
+      if (filterParts.length > 0) {
+        qs.set('$filter', filterParts.join(' and '));
+      }
+
+      const url = `${this.baseUrl}/${this.encodePathSegment(params.indicatorCode, 'indicatorCode')}?${qs}`;
+      const response = await this.fetchRaw(url, ctx, signal);
+
+      // 404 means unknown indicator code
+      if (response.status === 404) {
+        throw notFound(`Indicator code "${params.indicatorCode}" not found in the GHO catalog.`, {
+          reason: 'indicator_not_found',
+          indicatorCode: wellFormed(params.indicatorCode),
         });
-        if (filterParts.length > 0) {
-          qs.set('$filter', filterParts.join(' and '));
-        }
+      }
 
-        const url = `${this.baseUrl}/${this.encodePathSegment(params.indicatorCode, 'indicatorCode')}?${qs}`;
-        const response = await this.fetchRaw(url, ctx);
+      if (!response.ok && response.status !== 400) throw await this.httpError(response, url, ctx);
 
-        // 404 means unknown indicator code
-        if (response.status === 404) {
-          throw notFound(`Indicator code "${params.indicatorCode}" not found in the GHO catalog.`, {
-            reason: 'indicator_not_found',
-            indicatorCode: params.indicatorCode,
-          });
-        }
-
-        // The body is read before the status is classified: every malformed-query class
-        // GHO serves is an HTTP 400 carrying a diagnostic OData envelope, so classifying
-        // on status first would replace what GHO said was wrong with a generic HTTP 400.
-        // A non-2xx body that is not JSON at all has no diagnostic to prefer, so its
-        // status classification is thrown here instead of the parse failure — which,
-        // being ServiceUnavailable, would retry a deterministic 4xx four times.
-        const data = await this.parseJsonBody<ODataEnvelope<RawDataRow>>(response).catch(
-          async (err: unknown) => {
-            if (response.ok) throw err;
-            throw await this.httpError(response, url, ctx);
-          },
-        );
-
-        // GHO API returns {"error": {...}} when the OData query is rejected (e.g. malformed filter).
-        if ('error' in data) {
-          const oErr = (data as { error: { message?: string } }).error;
-          ctx.log.warning('GHO API rejected the OData query', { url });
-          throw serviceUnavailable(oErr.message ?? 'GHO API returned an OData error response.', {
-            reason: 'invalid_query',
-            // A rejected query is deterministic — withRetry's defaultIsTransient honors
-            // this flag ahead of the code lookup, so it fails on the first attempt
-            // instead of burning the full ServiceUnavailable retry budget.
-            retryable: false,
-          });
-        }
-
-        // Reached only by a non-2xx whose body parsed as JSON but carried no OData
-        // error envelope — the one non-2xx shape neither branch above claims.
-        if (!response.ok) {
+      // HTTP 400 can carry a diagnostic OData envelope: read it before classifying
+      // that status so the upstream's specific explanation survives. A non-JSON 400
+      // has no diagnostic to preserve and keeps its HTTP classification instead of
+      // retrying a parse failure. Other non-2xx statuses were classified above.
+      const data = await this.parseJsonBody<ODataEnvelope<RawDataRow>>(response, signal).catch(
+        async (err: unknown) => {
+          if (signal.aborted) throw err;
+          if (response.ok) throw err;
           throw await this.httpError(response, url, ctx);
-        }
+        },
+      );
 
-        const totalRows = data['@odata.count'] ?? data.value.length;
-        const rows = data.value.map((r) => this.normalizeRow(r, params.includeUncertainty));
+      // GHO API returns {"error": {...}} when the OData query is rejected (e.g. malformed filter).
+      if ('error' in data) {
+        const oErr = (data as { error: { message?: string } }).error;
+        ctx.log.warning('GHO API rejected the OData query', { url });
+        throw serviceUnavailable(oErr.message ?? 'GHO API returned an OData error response.', {
+          reason: 'invalid_query',
+          // A rejected query is deterministic — withRetry's defaultIsTransient honors
+          // this flag ahead of the code lookup, so it fails on the first attempt
+          // instead of burning the full ServiceUnavailable retry budget.
+          retryable: false,
+        });
+      }
 
-        return { rows, totalRows, truncated: params.offset + rows.length < totalRows };
-      },
-      { context: ctx, operation: 'GhoService.queryData', signal: ctx.signal },
-    );
+      // A JSON HTTP 400 without an OData error envelope retains its status mapping.
+      if (!response.ok) {
+        throw await this.httpError(response, url, ctx);
+      }
+
+      const totalRows = data['@odata.count'] ?? data.value.length;
+      const rows = data.value.map((r) => this.normalizeRow(r, params.includeUncertainty));
+
+      return { rows, totalRows, truncated: params.offset + rows.length < totalRows };
+    });
   }
 
   private normalizeRow(r: RawDataRow, includeUncertainty: boolean): DataRow {
@@ -298,6 +371,8 @@ export class GhoService {
       ...(r.Dim1 && { dim1: r.Dim1 }),
       ...(r.Dim2Type && { dim2Type: r.Dim2Type }),
       ...(r.Dim2 && { dim2: r.Dim2 }),
+      ...(r.Dim3Type && { dim3Type: r.Dim3Type }),
+      ...(r.Dim3 && { dim3: r.Dim3 }),
       ...(r.NumericValue != null && { numericValue: r.NumericValue }),
       ...(includeUncertainty && r.Low != null && { low: r.Low }),
       ...(includeUncertainty && r.High != null && { high: r.High }),
@@ -306,41 +381,46 @@ export class GhoService {
     };
   }
 
-  /**
-   * Raw fetch with composed timeout + cancellation signal.
-   * Does not throw on non-2xx — callers inspect `response.status` as needed.
-   */
-  private async fetchRaw(url: string, ctx: Context): Promise<Response> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-    const onAbort = () => controller.abort();
-    ctx.signal.addEventListener('abort', onAbort, { once: true });
+  /** Bound every attempt, body read, and backoff by one service-operation deadline. */
+  private async retry<T>(
+    ctx: Context,
+    operation: string,
+    run: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     try {
-      return await fetch(url, { signal: controller.signal });
+      return await withRetry(({ signal }) => run(signal), {
+        context: ctx,
+        operation,
+        signal: ctx.signal,
+        deadlineMs: this.timeoutMs,
+      });
     } catch (err: unknown) {
-      if (ctx.signal.aborted) {
-        ctx.log.debug('GHO API request cancelled', { url });
-        // RequestCancelled is outside withRetry's transient set, so a caller that went
-        // away is not retried; ServiceUnavailable would have burned the whole budget.
-        throw requestCancelled('Request cancelled by the caller.');
-      }
+      if (ctx.signal.aborted) throw requestCancelled('Request cancelled by the caller.');
+      throw err;
+    }
+  }
+
+  /** Fetch headers with the retry boundary's signal; callers classify HTTP statuses. */
+  private async fetchRaw(url: string, ctx: Context, signal: AbortSignal): Promise<Response> {
+    try {
+      signal.throwIfAborted();
+      return await fetch(url, { signal });
+    } catch (err: unknown) {
+      if (signal.aborted) throw signal.reason;
       ctx.log.warning('Network error contacting the GHO API', { url });
       throw serviceUnavailable('Network error contacting the GHO API.', undefined, {
         cause: err,
       });
-    } finally {
-      clearTimeout(timeoutId);
-      ctx.signal.removeEventListener('abort', onAbort);
     }
   }
 
   /** Internal: fetch JSON from a URL and parse the OData envelope. Throws on non-2xx. */
-  private async getJson<T>(url: string, ctx: Context): Promise<T> {
-    const response = await this.fetchRaw(url, ctx);
+  private async getJson<T>(url: string, ctx: Context, signal: AbortSignal): Promise<T> {
+    const response = await this.fetchRaw(url, ctx, signal);
     if (!response.ok) {
       throw await this.httpError(response, url, ctx);
     }
-    return this.parseJsonBody<T>(response);
+    return this.parseJsonBody<T>(response, signal);
   }
 
   /**
@@ -351,8 +431,8 @@ export class GhoService {
     ctx.log.warning('GHO API returned a non-2xx status', { url, status: response.status });
     return httpErrorFromResponse(response, {
       service: 'GHO API',
-      // The body is already consumed on the queryData path, and capturing it would put
-      // upstream text on a client-facing surface either way.
+      // The HTTP 400 body may already be consumed; arbitrary upstream error text
+      // stays off client-facing surfaces, apart from the explicit OData diagnostic.
       captureBody: false,
       // Retryability is left to the framework's default status mapping: the 5xx range is
       // transient — ServiceUnavailable for the range, Timeout for 504, both in withRetry's
@@ -368,8 +448,10 @@ export class GhoService {
    * under some failure modes, so sniff for that first — otherwise it surfaces as a
    * JSON syntax error rather than as the service being unavailable.
    */
-  private async parseJsonBody<T>(response: Response): Promise<T> {
+  private async parseJsonBody<T>(response: Response, signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted();
     const text = await response.text();
+    signal.throwIfAborted();
     if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
       throw serviceUnavailable(
         'GHO API returned HTML instead of JSON — possibly rate-limited or temporarily unavailable.',

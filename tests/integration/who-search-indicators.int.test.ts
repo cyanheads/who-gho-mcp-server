@@ -25,6 +25,21 @@ const upstream = useGhoUpstream({
     const filter = url.searchParams.get('$filter') ?? '';
     if (filter.includes('nomatch')) return odata([], 0);
     const skip = Number(url.searchParams.get('$skip'));
+    if (filter === "IndicatorCode eq 'WHS9_95'")
+      return odata(
+        skip > 0
+          ? []
+          : [{ IndicatorCode: 'WHS9_95', IndicatorName: 'Total fertility rate (per woman)' }],
+        1,
+      );
+    if (filter === "IndicatorCode eq 'MDG'") return odata([], 0);
+    if (
+      filter.includes("contains(IndicatorName,'WHS9_95')") ||
+      filter.includes("contains(IndicatorName,'MDG')")
+    )
+      return odata([], 0);
+    if (filter.includes('R&D'))
+      return odata([{ IndicatorCode: 'GB_XPD_RSDV', IndicatorName: 'R&amp;D expenditure' }], 1);
     return odata(skip >= TOTAL ? [] : MATCHES, TOTAL);
   },
 });
@@ -49,7 +64,9 @@ toolContractSuite(whoSearchIndicators, {
       },
       assert: (result) => {
         const query = lastQuery();
-        expect(query.get('$filter')).toBe("contains(IndicatorName,'life expectancy')");
+        expect(query.get('$filter')).toBe(
+          "contains(IndicatorName,'life') and contains(IndicatorName,'expectancy')",
+        );
         expect(query.get('$orderby')).toBe('IndicatorCode');
         expect(query.get('$top')).toBe('20');
         expect(query.get('$skip')).toBe('0');
@@ -65,7 +82,45 @@ toolContractSuite(whoSearchIndicators, {
       name: 'doubles apostrophes in the search literal',
       input: { query: "cote d'ivoire" },
       assert: () => {
-        expect(lastQuery().get('$filter')).toBe("contains(IndicatorName,'cote d''ivoire')");
+        expect(lastQuery().get('$filter')).toBe(
+          "contains(IndicatorName,'cote') and contains(IndicatorName,'d''ivoire')",
+        );
+      },
+    },
+    {
+      name: 'uses exact code fallback only after a name miss',
+      input: { query: 'WHS9_95' },
+      expected: {
+        indicators: [
+          { indicatorCode: 'WHS9_95', indicatorName: 'Total fertility rate (per woman)' },
+        ],
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$filter')).toBe("IndicatorCode eq 'WHS9_95'");
+        expect(result.structuredContent).toMatchObject({ totalCount: 1, hasMore: false });
+        expect(JSON.stringify(result.content)).toContain('Total fertility rate');
+      },
+    },
+    {
+      name: 'preserves the exact code result total beyond its last page',
+      input: { query: 'WHS9_95', offset: 1 },
+      expected: { indicators: [] },
+      assert: (result) => {
+        expect(result.structuredContent).toMatchObject({ totalCount: 1, hasMore: false });
+        expect(JSON.stringify(result.content)).toContain('last reachable offset is 0');
+      },
+    },
+    {
+      name: 'searches both ampersand forms and returns decoded names on both surfaces',
+      input: { query: 'R&D' },
+      expected: {
+        indicators: [{ indicatorCode: 'GB_XPD_RSDV', indicatorName: 'R&D expenditure' }],
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$filter')).toBe(
+          "(contains(IndicatorName,'R&D') or contains(IndicatorName,'R&amp;D'))",
+        );
+        expect(JSON.stringify(result.content)).toContain('R&D expenditure');
       },
     },
     {
@@ -79,6 +134,17 @@ toolContractSuite(whoSearchIndicators, {
     },
   ],
   errors: [
+    {
+      name: 'rejects a whitespace-only query',
+      input: { query: ' \t ' },
+      code: JsonRpcErrorCode.InvalidParams,
+    },
+    {
+      name: 'does not treat partial indicator codes as prefixes',
+      input: { query: 'MDG' },
+      code: JsonRpcErrorCode.NotFound,
+      reason: 'no_results',
+    },
     {
       name: 'reports a keyword that matched no indicators',
       input: { query: 'nomatch' },

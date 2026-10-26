@@ -55,6 +55,27 @@ const upstream = useGhoUpstream({
     const code = decodeURIComponent(url.pathname.split('/').pop() ?? '');
     if (code === 'GHO_MISSING') return new Response('Not Found', { status: 404 });
     if (code === 'GHO_EMPTY') return odata([], 0);
+    if (code === 'SPARSE')
+      return odata(
+        [
+          {
+            IndicatorCode: 'SPARSE',
+            Dim1: 'VALUE1',
+            Dim2Type: 'AGEGROUP',
+            Dim3: 'CAUSE3',
+            Low: 0,
+            High: null,
+          },
+          {
+            IndicatorCode: 'SPARSE',
+            Dim1Type: 'SEX',
+            Dim2: 'VALUE2',
+            Dim3Type: 'CHILDCAUSE',
+            High: 12,
+          },
+        ],
+        2,
+      );
     if (code === 'GHO_BADQUERY') {
       return Response.json({ error: { message: 'Invalid OData literal in $filter.' } });
     }
@@ -70,6 +91,97 @@ const lastQuery = (): URLSearchParams =>
 
 toolContractSuite(whoQueryIndicatorData, {
   success: [
+    ...(['dim2_value', 'dim3_value'] as const).map((field, index) => ({
+      name: `wires independent ${field}`,
+      input: { indicator_code: 'WHOSIS_000001', [field]: 'VALUE' },
+      assert: () => {
+        expect(lastQuery().get('$filter')).toBe(`Dim${index + 2} eq 'VALUE'`);
+      },
+    })),
+    {
+      name: 'omits both sparse uncertainty bounds when disabled',
+      input: { indicator_code: 'SPARSE', include_uncertainty: false },
+      assert: (result) => {
+        const rows = (result.structuredContent as { rows: object[] }).rows;
+        for (const row of rows) {
+          expect(row).not.toHaveProperty('low');
+          expect(row).not.toHaveProperty('high');
+        }
+        const text = JSON.stringify(result.content);
+        expect(text).not.toContain('low:');
+        expect(text).not.toContain('high:');
+        expect(lastQuery().get('$select')).not.toContain('Low');
+      },
+    },
+    {
+      name: 'preserves sparse dimensions and one-sided uncertainty on both surfaces',
+      input: { indicator_code: 'SPARSE' },
+      assert: (result) => {
+        expect(result.structuredContent).toMatchObject({
+          rows: [
+            {
+              indicatorCode: 'SPARSE',
+              dim1: 'VALUE1',
+              dim2Type: 'AGEGROUP',
+              dim3: 'CAUSE3',
+              low: 0,
+            },
+            {
+              indicatorCode: 'SPARSE',
+              dim1Type: 'SEX',
+              dim2: 'VALUE2',
+              dim3Type: 'CHILDCAUSE',
+              high: 12,
+            },
+          ],
+        });
+        const text = result.content
+          .map((block) => (block.type === 'text' ? block.text : ''))
+          .join('\n');
+        for (const value of [
+          'VALUE1',
+          'VALUE2',
+          'CAUSE3',
+          'AGEGROUP',
+          'SEX',
+          'CHILDCAUSE',
+          '[low: 0]',
+          '[high: 12]',
+        ])
+          expect(text).toContain(value);
+        expect(text).not.toContain('undefined');
+        expect(text).not.toContain('numeric=');
+      },
+    },
+    {
+      name: 'wires independently escaped Dim2 and Dim3 predicates and effective echoes',
+      input: {
+        indicator_code: 'WHOSIS_000001',
+        dim2_value: "AGE'GROUP",
+        dim3_value: 'CHILDCAUSE_CH9',
+        sex: 'SEX_FMLE',
+        dim1_value: 'IGNORED',
+        limit: 1,
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$filter')).toBe(
+          "Dim1Type eq 'SEX' and Dim1 eq 'SEX_FMLE' and Dim2 eq 'AGE''GROUP' and Dim3 eq 'CHILDCAUSE_CH9'",
+        );
+        expect(lastQuery().get('$select')).toContain('Dim3Type,Dim3');
+        expect(result.structuredContent).toMatchObject({
+          appliedFilters: { sex: 'SEX_FMLE', dim2Value: "AGE'GROUP", dim3Value: 'CHILDCAUSE_CH9' },
+          truncated: true,
+        });
+        expect(
+          (result.structuredContent as { appliedFilters: object }).appliedFilters,
+        ).not.toHaveProperty('dim1Value');
+        const text = result.content
+          .map((block) => (block.type === 'text' ? block.text : ''))
+          .join('\n');
+        for (const value of ["AGE'GROUP", 'CHILDCAUSE_CH9', 'dim1_value', 'Request offset 1'])
+          expect(text).toContain(value);
+      },
+    },
     {
       name: 'returns rows and emits a country spatial filter ordered most-recent-first',
       input: { indicator_code: 'WHOSIS_000001', country_codes: ['JPN', 'USA'] },

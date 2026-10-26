@@ -1,13 +1,13 @@
 <div align="center">
   <h1>@cyanheads/who-gho-mcp-server</h1>
-  <p><b>Query WHO Global Health Observatory data — 3,059 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.</b>
-  <div>6 Tools • 4 Resources</div>
+  <p><b>Query WHO Global Health Observatory data — 3,102 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP.</b>
+  <div>6 Tools • 4 Data Resources • 1 Skill</div>
   </p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/who-gho-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.2.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/who-gho-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/who-gho-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/who-gho-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/who-gho-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/who-gho-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -25,7 +25,7 @@
 
 ## Overview
 
-WHO Global Health Observatory (GHO) data — 3,059 indicators across 194 member states. Search the indicator catalog, discover country, region, income-group, and sex filter dimensions, and query data rows from any MCP client. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+Global health statistics from the WHO Global Health Observatory: 3,102 indicators across 194 member states. Search indicators and query data by country, region, income group, sex, and year.
 
 ### Tools
 
@@ -33,7 +33,7 @@ WHO Global Health Observatory (GHO) data — 3,059 indicators across 194 member 
 |:---|:---|
 | `who_search_indicators` | Search the GHO indicator catalog by keyword in indicator names |
 | `who_list_indicators` | Browse the full indicator catalog with pagination |
-| `who_get_indicator_metadata` | Fetch indicator names and supported filter dimensions for up to 10 codes |
+| `who_get_indicator_metadata` | Fetch indicator names and dimension types, processing 10 codes per call with continuation for larger batches |
 | `who_list_dimensions` | List all dimension type codes available in the GHO API |
 | `who_list_dimension_values` | List valid codes and labels for a dimension type (COUNTRY, REGION, SEX, etc.) |
 | `who_query_indicator_data` | Query data rows for an indicator with spatial, temporal, and dimension filters |
@@ -49,11 +49,15 @@ WHO Global Health Observatory (GHO) data — 3,059 indicators across 194 member 
 
 Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_dimension_values` — useful for clients that inject resources as context but don't call tools.
 
+### Agent skill
+
+[who-gho-guide](./skills/who-gho-guide/SKILL.md) covers dimension-position discovery, complete country comparisons, and countries versus regional aggregates. It ships with plugin installs, npm, Docker, and the MCPB bundle. MCP clients can discover its `SKILL.md` through `resources/list` or the `io.modelcontextprotocol/skills` extension (`skills/list`, `skills/get`, and `resources/directory/read`); the server also exposes the `skill://{+path}` resource template.
+
 ## Capability reference
 
 ### `who_search_indicators` <sub>tool</sub>
 
-- Substring match on indicator names — try terms like `"life expectancy"`, `"immunization"`, `"mortality"`, `"diabetes"`, or `"HIV"`
+- Each whitespace-separated word must match a substring in the indicator name, in any order; no stemming or fuzzy expansion. If names have no matches, an exact indicator-code lookup is attempted.
 - Returns indicator codes and display names for use with `who_query_indicator_data`
 - Offset-based pagination (`offset`, default 0) with `limit` default 20, max 100; reports `totalCount`, `hasMore`, `pageInfo`, `nextOffset`
 - An offset at or beyond `totalCount` returns an empty page; a `no_results` error is raised only when nothing matches at all
@@ -62,7 +66,7 @@ Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_
 
 ### `who_list_indicators` <sub>tool</sub>
 
-- No keyword required — lists all 3,059+ catalog indicators
+- No keyword required — browse the 3,102-indicator catalog
 - Offset-based pagination via `limit` (default 50, max 500) and `offset`
 - Returns `totalCount` and `hasMore` for iteration
 
@@ -70,10 +74,10 @@ Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_
 
 ### `who_get_indicator_metadata` <sub>tool</sub>
 
-- Accepts 1–10 indicator codes per call, fetched in parallel
+- Accepts up to 1,000 indicator codes and processes the first 10 in parallel; submit returned `unprocessedCodes` next. With `GHO_CLAMP_LIMITS=false`, batches over 10 are rejected.
 - Returns the full indicator name and supported dimension types (e.g. `COUNTRY`, `SEX`, `REGION`, `AGEGROUP`) for each resolved code
-- Roughly 1,300 catalog indicators have no dimension listing upstream — those return `dimensions: []` plus a `dimensionsNote` pointing at a sample data row's `dim1Type`/`dim2Type`, not a not-found
-- Codes absent from the catalog land in `notFound` rather than raising an error; the call fails only when none of the requested codes resolve
+- Indicators with no dimension listing upstream return `dimensions: []` plus a `dimensionsNote` pointing at a sample data row's dimension type/value pairs. Metadata does not identify dimension positions.
+- Codes resolving to neither a catalog entry nor dimension rows land in `notFound`; the call fails when no processed code resolves and no unprocessed codes remain
 
 ---
 
@@ -90,15 +94,15 @@ Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_
 - Returns codes and labels for the dimension's values (e.g. the 234 country entries, the 43 WHO region codes), plus optional parent-hierarchy fields (`parentCode`, `parentLabel`, `parentDimension`)
 - `parent_code` narrows hierarchical dimensions — `dimension: "COUNTRY"` with `parent_code: "EUR"` returns the 58 countries in the WHO European Region
 - Deterministic ordering by `Code`; offset-based pagination (`offset`) with `limit` default 100, max 500 — `GHO` (3,103 values) and `DHSMICSGEOREGION` (4,932) need paging
-- A `parent_code` that matches nothing returns an empty page, not an error; only an unfiltered empty result means the dimension itself does not exist
+- A `parent_code` that matches nothing returns an empty page for a known dimension; unknown dimensions fail even with a parent filter
 - An unpaired UTF-16 surrogate in `dimension` fails as a typed `malformed_identifier` validation error
 
 ---
 
 ### `who_query_indicator_data` <sub>tool</sub>
 
-- Spatial filters are mutually exclusive per call: `country_codes` (ISO 3166-1 alpha-3), `region_codes` (WHO regions), or `income_group_codes` (World Bank groups) — supplying more than one is a validation error
-- `year_from` / `year_to` time range; `sex` (`SEX_BTSX`, `SEX_FMLE`, `SEX_MLE`) applies only when the indicator's first cross-cutting dimension is SEX, otherwise use `dim1_value`
+- Spatial filters are mutually exclusive per call: `country_codes` (WHO country codes, including historical entries), `region_codes` (WHO aggregate rows), or `income_group_codes` (World Bank aggregate rows) — supplying more than one is a validation error
+- `year_from` / `year_to` time range; `sex` (`SEX_BTSX`, `SEX_FMLE`, `SEX_MLE`) applies only when the indicator's first cross-cutting dimension is SEX. `dim1_value`, `dim2_value`, and `dim3_value` select observed positional values; discover positions from returned type/value pairs, not metadata. `sex` overrides `dim1_value` with a notice.
 - `include_uncertainty` (default true) adds `low`/`high` bounds; `sort` (`year_desc` default or `year_asc`) with a total row ordering so paging never repeats or drops rows
 - Offset-based pagination with `limit` default 200, max 1000; reports `totalRows`, `hasMore`, `pageInfo`, `nextOffset`
 - Typed failure reasons: `indicator_not_found`, `no_data`, `ambiguous_spatial_filter`, `invalid_year_range`, `invalid_query`, `malformed_identifier`
@@ -133,7 +137,7 @@ Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_
 ### `who://dimension/{dimensionCode}/values{?limit,offset,parentCode}` <sub>resource</sub>
 
 - Adds `parentCode` to narrow to one parent value, e.g. `parentCode="EUR"` for countries in the WHO European Region; `limit`, `offset`, and `parentCode` must all be present in the URI
-- A `parentCode` that matches nothing returns an empty page, not an error — read the unfiltered URI to confirm the dimension itself exists
+- A `parentCode` that matches nothing returns an empty page for a known dimension; unknown dimensions fail even with a parent filter
 - Same output shape as the bare and paged resources: `dimension`, `values`, `totalCount`, `hasMore`, `nextOffset`, `notice`
 
 ## Features
@@ -143,7 +147,7 @@ Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): s
 WHO GHO-specific:
 
 - Full coverage of the [WHO GHO OData API v2](https://www.who.int/data/gho/info/gho-odata-api) — indicators, dimensions, dimension values, and data queries
-- Configurable base URL and request timeout (`GHO_BASE_URL`, `GHO_REQUEST_TIMEOUT_MS`) for custom or mirrored deployments
+- Configurable base URL and service-operation deadline (`GHO_BASE_URL`, `GHO_REQUEST_TIMEOUT_MS`) for custom or mirrored deployments
 - Parallel metadata fan-out for multi-code indicator lookups
 - Deterministic, total row/value ordering — pagination never repeats or drops rows across pages
 
@@ -277,7 +281,8 @@ cp .env.example .env
 | `LOGS_DIR` | Directory for log files (Node.js only) | `<project-root>/logs` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1` | `in-memory` |
 | `GHO_BASE_URL` | WHO GHO OData API base URL (override for custom/mirrored deployments) | `https://ghoapi.azureedge.net/api/` |
-| `GHO_REQUEST_TIMEOUT_MS` | HTTP request timeout in milliseconds | `30000` |
+| `GHO_REQUEST_TIMEOUT_MS` | Service-operation deadline in milliseconds, covering requests, body reads, retries, and backoff | `30000` |
+| `GHO_CLAMP_LIMITS` | Clamp positive integer page limits to 100 for search, 500 for indicator/dimension browsing, and 1,000 for data queries, with a notice. Metadata processes 10 entries and returns continuation. `false` restores advertised maxima and rejection of oversized requests. | `true` |
 | `OTEL_ENABLED` | Enable OpenTelemetry | `false` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP base URL; traces and metrics export to `/v1/traces` and `/v1/metrics` under it. Log export is opt-in through `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`. | none |
 | `LOG_TOOL_FAILURE_PAYLOADS` | Log each failed tool call's arguments and result (key-name redaction only) | `false` |

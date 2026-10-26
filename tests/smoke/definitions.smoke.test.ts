@@ -154,21 +154,21 @@ describe('tool definitions', () => {
 
   it('rejects inputs that violate the declared constraints', () => {
     expect(whoSearchIndicators.input.safeParse({ query: '' }).success).toBe(false);
-    expect(whoSearchIndicators.input.safeParse({ query: 'x', limit: 101 }).success).toBe(false);
+    expect(whoSearchIndicators.input.safeParse({ query: 'x', limit: 101 }).success).toBe(true);
     expect(whoListDimensionValues.input.safeParse({ dimension: 'SEX', limit: 501 }).success).toBe(
-      false,
+      true,
     );
     expect(whoQueryIndicatorData.input.safeParse({ indicator_code: '' }).success).toBe(false);
     expect(
       whoQueryIndicatorData.input.safeParse({ indicator_code: 'X', limit: 1001 }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(whoQueryIndicatorData.input.safeParse({ indicator_code: 'X', sex: 'F' }).success).toBe(
       false,
     );
     expect(whoGetIndicatorMetadata.input.safeParse({ indicator_codes: [] }).success).toBe(false);
     expect(
       whoGetIndicatorMetadata.input.safeParse({
-        indicator_codes: Array.from({ length: 11 }, (_, i) => `C${i}`),
+        indicator_codes: Array.from({ length: 1001 }, (_, i) => `C${i}`),
       }).success,
     ).toBe(false);
   });
@@ -231,14 +231,14 @@ describe('resource definitions', () => {
     ).toEqual({ dimensionCode: 'COUNTRY', parentCode: 'EUR', limit: 25, offset: 0 });
   });
 
-  it('rejects out-of-range page variables', () => {
+  it('accepts oversized limits but rejects negative offsets', () => {
     expect(
       whoDimensionValuesPageResource.params!.safeParse({
         dimensionCode: 'COUNTRY',
         limit: '501',
         offset: '0',
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       whoDimensionValuesPageResource.params!.safeParse({
         dimensionCode: 'COUNTRY',

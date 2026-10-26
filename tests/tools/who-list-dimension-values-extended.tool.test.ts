@@ -50,11 +50,11 @@ describe('whoListDimensionValues — input validation', () => {
     ).not.toThrow();
   });
 
-  it('rejects a limit outside 1..500', () => {
+  it('rejects zero and accepts an oversized limit for bounded processing', () => {
     expect(() => whoListDimensionValues.input.parse({ dimension: 'COUNTRY', limit: 0 })).toThrow();
     expect(() =>
       whoListDimensionValues.input.parse({ dimension: 'COUNTRY', limit: 501 }),
-    ).toThrow();
+    ).not.toThrow();
   });
 
   it('accepts the limit boundaries', () => {

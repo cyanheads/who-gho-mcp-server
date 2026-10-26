@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/who-gho-mcp-server",
-  "description": "WHO Global Health Observatory — 3,059 indicators across 194 member states.",
+  "description": "WHO Global Health Observatory — 3,102 indicators across 194 member states.",
   "repository": {
     "url": "https://github.com/cyanheads/who-gho-mcp-server",
     "source": "github"
@@ -22,6 +22,13 @@
       "version": "0.3.6",
       "environmentVariables": [
         {
+          "name": "GHO_CLAMP_LIMITS",
+          "description": "Clamp oversized read pages and metadata batches; false restores strict ceiling rejection.",
+          "format": "boolean",
+          "isRequired": false,
+          "default": "true"
+        },
+        {
           "name": "MCP_LOG_LEVEL",
           "description": "Sets the minimum log level for output (e.g., 'debug', 'info', 'warn').",
           "format": "string",
@@ -40,6 +47,13 @@
       "runtimeHint": "npx",
       "version": "0.3.6",
       "environmentVariables": [
+        {
+          "name": "GHO_CLAMP_LIMITS",
+          "description": "Clamp oversized read pages and metadata batches; false restores strict ceiling rejection.",
+          "format": "boolean",
+          "isRequired": false,
+          "default": "true"
+        },
         {
           "name": "MCP_TRANSPORT_TYPE",
           "description": "Selects the HTTP transport.",

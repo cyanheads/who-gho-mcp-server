@@ -3,7 +3,8 @@
  * @module tests/resources/who-indicator-metadata.resource.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { createInMemoryStorage, createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoIndicatorMetadataResource } from '@/mcp-server/resources/definitions/who-indicator-metadata.resource.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
@@ -11,6 +12,21 @@ import * as ghoServiceModule from '@/services/gho/gho-service.js';
 const mockService = {
   getIndicatorDimensions: vi.fn(),
   listIndicators: vi.fn(),
+  getIndicatorMetadata(...args: Parameters<ghoServiceModule.GhoService['getIndicatorMetadata']>) {
+    const service = Object.assign(
+      new ghoServiceModule.GhoService({} as AppConfig, createInMemoryStorage()),
+      {
+        ...mockService,
+        async getIndicatorDimensions(
+          ...[codes, ctx]: Parameters<ghoServiceModule.GhoService['getIndicatorDimensions']>
+        ) {
+          const dimensions = await mockService.getIndicatorDimensions(codes, ctx);
+          return new Map(codes.map((code) => [code, dimensions.get(code) ?? []]));
+        },
+      },
+    );
+    return ghoServiceModule.GhoService.prototype.getIndicatorMetadata.call(service, ...args);
+  },
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);
@@ -46,6 +62,24 @@ describe('whoIndicatorMetadataResource', () => {
       indicatorName: 'Life expectancy at birth (years)',
     });
     expect(result.dimensions).toHaveLength(2);
+  });
+
+  it('uses the catalog canonical spelling and decoded name for a case variant', async () => {
+    mockService.getIndicatorDimensions.mockResolvedValue(new Map([['gb_xpd_rsdv', []]]));
+    mockService.listIndicators.mockResolvedValue({
+      indicators: [{ indicatorCode: 'GB_XPD_RSDV', indicatorName: 'R&D expenditure' }],
+      total: 1,
+    });
+    const result = await whoIndicatorMetadataResource.handler(
+      { indicatorCode: 'gb_xpd_rsdv' },
+      createMockContext(),
+    );
+    expect(whoIndicatorMetadataResource.output!.parse(result)).toMatchObject({
+      indicatorCode: 'GB_XPD_RSDV',
+      indicatorName: 'R&D expenditure',
+      dimensions: [],
+      dimensionsNote: expect.stringContaining('dim1Type'),
+    });
   });
 
   it('throws not found for unknown indicator code', async () => {

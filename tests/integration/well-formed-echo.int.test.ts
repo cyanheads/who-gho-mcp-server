@@ -202,7 +202,7 @@ describe('who_query_indicator_data echoes the applied filters', () => {
     ).toBe(`country_codes: JPN,${REPLACEMENT}`);
   });
 
-  it('repairs an unpaired surrogate in a dim1_value the sex filter overrode', async () => {
+  it('omits an overridden dim1_value and returns a well-formed precedence notice', async () => {
     respond = () => odata([DATA_ROW], 1);
 
     const result = await runToolContract(whoQueryIndicatorData, {
@@ -216,7 +216,10 @@ describe('who_query_indicator_data echoes the applied filters', () => {
     expect(
       (result.structuredContent as { appliedFilters?: { dim1Value?: string } }).appliedFilters
         ?.dim1Value,
-    ).toBe(REPLACEMENT);
+    ).toBeUndefined();
+    expect((result.structuredContent as { notice?: string }).notice).toContain(
+      'Ignored dim1_value because sex takes precedence',
+    );
   });
 
   it('leaves a paired astral character in the spatial filter byte-identical', async () => {

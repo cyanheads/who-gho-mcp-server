@@ -4,6 +4,7 @@
     "args": ["-y", "@cyanheads/who-gho-mcp-server"],
     "env": {
       "MCP_TRANSPORT_TYPE": "stdio"
-    }
+    },
+    "env_vars": ["GHO_CLAMP_LIMITS"]
   }
 }

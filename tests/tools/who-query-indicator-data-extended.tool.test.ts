@@ -50,10 +50,10 @@ describe('whoQueryIndicatorData — input validation', () => {
     expect(() => whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', limit: 0 })).toThrow();
   });
 
-  it('rejects limit=1001 (max 1000)', () => {
-    expect(() =>
-      whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', limit: 1001 }),
-    ).toThrow();
+  it('accepts an oversized limit for bounded processing', () => {
+    expect(whoQueryIndicatorData.input.parse({ indicator_code: 'CODE', limit: 1001 }).limit).toBe(
+      1001,
+    );
   });
 
   it('accepts limit at boundaries: 1 and 1000', () => {

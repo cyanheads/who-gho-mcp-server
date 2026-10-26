@@ -253,6 +253,17 @@ const ECHO_CASES: readonly (readonly [string, (value: string) => Promise<unknown
         dim1_value,
       }),
   ],
+  ...(['dim2_value', 'dim3_value'] as const).map(
+    (field) =>
+      [
+        `who_query_indicator_data ${field}`,
+        (value: string) =>
+          runToolContract(whoQueryIndicatorData, {
+            indicator_code: 'WHOSIS_000001',
+            [field]: value,
+          }),
+      ] as const,
+  ),
 ];
 
 it.each(ECHO_CASES)(

@@ -28,8 +28,8 @@ describe('whoSearchIndicators — input validation', () => {
     expect(() => whoSearchIndicators.input.parse({ query: 'test', limit: 0 })).toThrow();
   });
 
-  it('rejects limit=101 (max 100)', () => {
-    expect(() => whoSearchIndicators.input.parse({ query: 'test', limit: 101 })).toThrow();
+  it('accepts an oversized limit for bounded processing', () => {
+    expect(whoSearchIndicators.input.parse({ query: 'test', limit: 101 }).limit).toBe(101);
   });
 
   it('accepts limit at boundary: 1 and 100', () => {

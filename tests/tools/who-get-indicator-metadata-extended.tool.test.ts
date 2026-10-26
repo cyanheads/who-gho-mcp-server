@@ -4,7 +4,8 @@
  * @module tests/tools/who-get-indicator-metadata-extended.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { createInMemoryStorage, createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoGetIndicatorMetadata } from '@/mcp-server/tools/definitions/who-get-indicator-metadata.tool.js';
 import * as ghoServiceModule from '@/services/gho/gho-service.js';
@@ -12,6 +13,21 @@ import * as ghoServiceModule from '@/services/gho/gho-service.js';
 const mockService = {
   getIndicatorDimensions: vi.fn(),
   listIndicators: vi.fn(),
+  getIndicatorMetadata(...args: Parameters<ghoServiceModule.GhoService['getIndicatorMetadata']>) {
+    const service = Object.assign(
+      new ghoServiceModule.GhoService({} as AppConfig, createInMemoryStorage()),
+      {
+        ...mockService,
+        async getIndicatorDimensions(
+          ...[codes, ctx]: Parameters<ghoServiceModule.GhoService['getIndicatorDimensions']>
+        ) {
+          const dimensions = await mockService.getIndicatorDimensions(codes, ctx);
+          return new Map(codes.map((code) => [code, dimensions.get(code) ?? []]));
+        },
+      },
+    );
+    return ghoServiceModule.GhoService.prototype.getIndicatorMetadata.call(service, ...args);
+  },
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);
@@ -21,8 +37,8 @@ describe('whoGetIndicatorMetadata — input validation', () => {
     expect(() => whoGetIndicatorMetadata.input.parse({ indicator_codes: [] })).toThrow();
   });
 
-  it('rejects array with more than 10 codes (max 10)', () => {
-    const codes = Array.from({ length: 11 }, (_, i) => `CODE_${i}`);
+  it('rejects array with more than 1000 raw entries', () => {
+    const codes = Array.from({ length: 1001 }, (_, i) => `CODE_${i}`);
     expect(() => whoGetIndicatorMetadata.input.parse({ indicator_codes: codes })).toThrow();
   });
 

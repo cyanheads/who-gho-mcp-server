@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: who-gho-mcp-server
-abstract: "Query WHO Global Health Observatory data — 3,059 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP."
+abstract: "Query WHO Global Health Observatory data — 3,102 indicators across 194 member states with country, region, year, and sex filters via MCP. STDIO or Streamable HTTP."
 type: software
 authors:
   - family-names: Hand
