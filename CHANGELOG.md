@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.0](changelog/0.4.x/0.4.0.md) — 2026-10-26 · ⚠️ Breaking
+
+WHO health queries gain independent search terms, canonical metadata, positional dimension filters, bounded reads, and a comparison guide; request deadlines cover response bodies and retries.
+
 ## [0.3.6](changelog/0.3.x/0.3.6.md) — 2026-10-09
 
 mcp-ts-core ^0.13.6 → ^0.13.14: tool errors now end with their reason and request ID, numeric strings, a lone string for a list field, and null optional fields are repaired before validation, the Docker image installs dependencies in a build-platform stage, and the MCP Registry HTTP entry now starts the HTTP transport.
