@@ -75,6 +75,27 @@ it('composes search clamping with middle, final and exhausted page notices', asy
   }
 });
 
+it('composes list clamping with middle, final and exhausted page notices', async () => {
+  const indicators = [{ indicatorCode: 'X', indicatorName: 'X' }];
+  const notices = {
+    1: 'Requested limit 501; applied limit 500. Showing 1 of 3 indicators (offset 1). Request offset 2 for the next page, raise the limit (max 500), or use who_search_indicators to narrow by keyword.',
+    2: 'Requested limit 501; applied limit 500.',
+    3: 'Requested limit 501; applied limit 500. Offset 3 is at or beyond the 3 indicators in the catalog; the last reachable offset is 2.',
+  } as const;
+  for (const offset of [1, 2, 3] as const) {
+    listIndicators.mockResolvedValue({ indicators: offset < 3 ? indicators : [], total: 3 });
+    const result = await runToolContract(whoListIndicators, { limit: 501, offset });
+    expect(result.isError).toBeFalsy();
+    expect(listIndicators).toHaveBeenLastCalledWith({ limit: 500, offset }, expect.anything());
+    expect(result.structuredContent).toMatchObject({
+      offset,
+      hasMore: offset === 1,
+      notice: notices[offset],
+    });
+    expect(JSON.stringify(result.content)).toContain(notices[offset]);
+  }
+});
+
 it('composes dimension clamping with an empty parent filter on both surfaces', async () => {
   listDimensionValues.mockResolvedValue({ values: [], total: 0 });
   const result = await runToolContract(whoListDimensionValues, {

@@ -22,7 +22,9 @@ export const whoListIndicators = tool('who_list_indicators', {
       .int()
       .min(0)
       .default(0)
-      .describe('Zero-based offset for pagination. Default 0.'),
+      .describe(
+        'Zero-based offset into the catalog. Default 0. Read hasMore and nextOffset from the response to continue paging. An offset at or beyond totalCount returns an empty indicators array, not an error.',
+      ),
   }),
   output: z.object({
     indicators: z
@@ -43,36 +45,76 @@ export const whoListIndicators = tool('who_list_indicators', {
       .describe('Indicators for the requested page.'),
   }),
 
-  // Agent-facing pagination context: catalog total and whether more pages exist.
+  // Agent-facing pagination context: catalog total, page position, and how to continue.
   // Lives in enrichment so it reaches both structuredContent and content[] alike.
   enrichment: {
-    notice: z
-      .string()
-      .optional()
-      .describe('Requested and applied limit when the page was clamped.'),
     totalCount: z.number().describe('Total number of indicators in the GHO catalog.'),
-    hasMore: z.boolean().describe('True when more indicators exist beyond the current page.'),
+    offset: z.number().describe('Zero-based offset this page started at.'),
+    hasMore: z
+      .boolean()
+      .describe(
+        'True when more indicators remain beyond this page. Pair with nextOffset to continue.',
+      ),
     pageInfo: z
       .string()
       .describe(
-        'Human-readable page position, e.g. "offset 0, showing 50 of 3102". Use to construct the next offset.',
+        'Human-readable page position, in the form "offset {offset}, showing {returned} of {totalCount}". Use to construct the next offset.',
+      ),
+    nextOffset: z
+      .number()
+      .optional()
+      .describe(
+        'Offset to request for the next page. Absent when this page reached the end of the catalog.',
+      ),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Present when the requested limit was clamped, indicators remain beyond this page, or the requested offset ran past the end of the catalog. Explains how to reach the remaining indicators.',
       ),
   },
 
+  enrichmentTrailer: {
+    notice: { render: (value: string) => escapeMarkdownInline(value) },
+  },
+
   async handler(input, ctx) {
-    const { limit, notice } = applyReadLimit(input.limit, 500, 'who_list_indicators', ctx);
+    const { limit, notice: clampNotice } = applyReadLimit(
+      input.limit,
+      500,
+      'who_list_indicators',
+      ctx,
+    );
     ctx.log.info('Listing indicators', { limit: input.limit, offset: input.offset });
     const { indicators, total } = await getGhoService().listIndicators(
       { limit, offset: input.offset },
       ctx,
     );
-    const hasMore = input.offset + indicators.length < total;
+
+    const nextOffset = input.offset + indicators.length;
+    const hasMore = nextOffset < total;
+    const pastEnd = total > 0 && input.offset >= total;
+
     ctx.enrich.total(total);
-    if (notice) ctx.enrich.notice(notice);
     ctx.enrich({
+      offset: input.offset,
       hasMore,
       pageInfo: `offset ${input.offset}, showing ${indicators.length} of ${total}`,
+      ...(hasMore && { nextOffset }),
     });
+
+    // `notice` is last-wins — compose the applicable segment and write it once.
+    const notices = clampNotice ? [clampNotice] : [];
+    if (pastEnd) {
+      notices.push(
+        `Offset ${input.offset} is at or beyond the ${total} indicators in the catalog; the last reachable offset is ${total - 1}.`,
+      );
+    } else if (hasMore) {
+      notices.push(
+        `Showing ${indicators.length} of ${total} indicators (offset ${input.offset}). Request offset ${nextOffset} for the next page, raise the limit (max 500), or use who_search_indicators to narrow by keyword.`,
+      );
+    }
+    if (notices.length) ctx.enrich.notice(notices.join(' '));
     return { indicators };
   },
 
