@@ -253,7 +253,7 @@ const ECHO_CASES: readonly (readonly [string, (value: string) => Promise<unknown
         dim1_value,
       }),
   ],
-  ...(['dim2_value', 'dim3_value'] as const).map(
+  ...(['dim2_value', 'dim3_value', 'data_source', 'spatial_type'] as const).map(
     (field) =>
       [
         `who_query_indicator_data ${field}`,
@@ -264,6 +264,15 @@ const ECHO_CASES: readonly (readonly [string, (value: string) => Promise<unknown
           }),
       ] as const,
   ),
+  [
+    'who_query_indicator_data spatial_codes',
+    (code) =>
+      runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        spatial_type: 'COUNTRY',
+        spatial_codes: [code],
+      }),
+  ],
 ];
 
 it.each(ECHO_CASES)(

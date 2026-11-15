@@ -4,7 +4,7 @@
  * @module tests/tools/who-query-indicator-data-extended.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import { type Context, z } from '@cyanheads/mcp-ts-core';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoQueryIndicatorData } from '@/mcp-server/tools/definitions/who-query-indicator-data.tool.js';
@@ -65,9 +65,38 @@ describe('whoQueryIndicatorData — input validation', () => {
     ).not.toThrow();
   });
 
-  it('applies default limit 200', () => {
+  it('applies default limit 25 and advertises it in the input schema (#43)', () => {
     const parsed = whoQueryIndicatorData.input.parse({ indicator_code: 'CODE' });
-    expect(parsed.limit).toBe(200);
+    expect(parsed.limit).toBe(25);
+    const limit = (
+      z.toJSONSchema(whoQueryIndicatorData.input) as {
+        properties: Record<string, { default?: unknown; description?: string }>;
+      }
+    ).properties.limit;
+    expect(limit?.default).toBe(25);
+    expect(limit?.description).toContain('Default 25, max 1000.');
+  });
+
+  it('rejects an empty spatial_codes entry but passes spatial_type and data_source strings through', () => {
+    expect(
+      whoQueryIndicatorData.input.safeParse({
+        indicator_code: 'CODE',
+        spatial_type: 'WORLDBANKREGION',
+        spatial_codes: [''],
+      }).success,
+    ).toBe(false);
+    expect(
+      whoQueryIndicatorData.input.parse({
+        indicator_code: 'CODE',
+        spatial_type: 'global',
+        spatial_codes: ['wb_ssa'],
+        data_source: 'datasource_nlis_312831',
+      }),
+    ).toMatchObject({
+      spatial_type: 'global',
+      spatial_codes: ['wb_ssa'],
+      data_source: 'datasource_nlis_312831',
+    });
   });
 
   it('applies default include_uncertainty true', () => {
@@ -273,12 +302,12 @@ describe('whoQueryIndicatorData — dim1_value and include_uncertainty', () => {
     const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
     const input = whoQueryIndicatorData.input.parse({
       indicator_code: 'WHOSIS_000001',
-      dim1_value: 'YEARS05-14',
+      dim1_value: 'AGEGROUP_YEARS05-14',
     });
     await whoQueryIndicatorData.handler(input, ctx);
 
     const filters = appliedFilters(ctx);
-    expect(filters.dim1Value).toBe('YEARS05-14');
+    expect(filters.dim1Value).toBe('AGEGROUP_YEARS05-14');
   });
 
   it('does not crash when include_uncertainty=false', async () => {

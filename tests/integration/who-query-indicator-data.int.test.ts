@@ -48,6 +48,42 @@ const ROWS = [
   },
 ];
 
+/** Two estimates for one country, year and sex that differ only in their source survey. */
+const SOURCED_ROWS = [
+  ['DATASOURCE_NLIS_312831', 16.7],
+  ['DATASOURCE_NLIS_311568', 18.8],
+].map(([dataSource, value]) => ({
+  IndicatorCode: 'NUTRITION_564',
+  SpatialDimType: 'COUNTRY',
+  SpatialDim: 'BGD',
+  TimeDim: 1992,
+  ParentLocation: 'South-East Asia',
+  ParentLocationCode: 'SEAR',
+  Dim1Type: 'SEX',
+  Dim1: 'SEX_BTSX',
+  DataSourceDimType: 'DATASOURCE',
+  DataSourceDim: dataSource,
+  NumericValue: value,
+  Value: String(value),
+}));
+
+/** Aggregate rows of a non-WHO geography type, with the upstream's null parent fields. */
+const WB_REGION_ROWS = [2021, 2019].map((year) => ({
+  IndicatorCode: 'UHC_INDEX_REPORTED',
+  SpatialDimType: 'WORLDBANKREGION',
+  SpatialDim: 'WB_SSA',
+  TimeDim: year,
+  ParentLocation: null,
+  ParentLocationCode: null,
+  DataSourceDimType: null,
+  DataSourceDim: null,
+  NumericValue: 44,
+  Value: '44',
+}));
+
+const textOf = (result: { content: { type: string; text?: string }[] }): string =>
+  result.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
+
 const upstream = useGhoUpstream({
   match: (request) => request.url.startsWith(`${BASE}/`),
   respond: (request) => {
@@ -79,6 +115,8 @@ const upstream = useGhoUpstream({
     if (code === 'GHO_BADQUERY') {
       return Response.json({ error: { message: 'Invalid OData literal in $filter.' } });
     }
+    if (code === 'NUTRITION_564') return odata(SOURCED_ROWS);
+    if (code === 'UHC_INDEX_REPORTED') return odata(WB_REGION_ROWS);
     const top = Number(url.searchParams.get('$top'));
     const skip = Number(url.searchParams.get('$skip'));
     return odata(ROWS.slice(skip, skip + top), ROWS.length);
@@ -223,7 +261,11 @@ toolContractSuite(whoQueryIndicatorData, {
     },
     {
       name: 'emits a sex filter ahead of dim1_value when both are supplied',
-      input: { indicator_code: 'WHOSIS_000001', sex: 'SEX_FMLE', dim1_value: 'YEARS05-14' },
+      input: {
+        indicator_code: 'WHOSIS_000001',
+        sex: 'SEX_FMLE',
+        dim1_value: 'AGEGROUP_YEARS05-14',
+      },
       assert: () => {
         expect(lastQuery().get('$filter')).toBe("Dim1Type eq 'SEX' and Dim1 eq 'SEX_FMLE'");
       },
@@ -253,6 +295,106 @@ toolContractSuite(whoQueryIndicatorData, {
         expect((result.structuredContent as { notice?: string }).notice).toContain('99');
       },
     },
+    {
+      name: 'selects the data-source fields and keeps two sources for one country-year-sex apart (#39)',
+      input: {
+        indicator_code: 'NUTRITION_564',
+        country_codes: ['BGD'],
+        year_from: 1992,
+        year_to: 1992,
+        sex: 'SEX_BTSX',
+      },
+      expected: {
+        rows: [
+          {
+            indicatorCode: 'NUTRITION_564',
+            dataSourceDimType: 'DATASOURCE',
+            dataSourceDim: 'DATASOURCE_NLIS_312831',
+          },
+          {
+            indicatorCode: 'NUTRITION_564',
+            dataSourceDimType: 'DATASOURCE',
+            dataSourceDim: 'DATASOURCE_NLIS_311568',
+          },
+        ],
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$select')).toContain('Dim3,DataSourceDimType,DataSourceDim');
+        const text = textOf(result);
+        expect(text).toContain('| SEX: SEX_BTSX | DATASOURCE: DATASOURCE_NLIS_312831 display=16.7');
+        expect(text).toContain('| SEX: SEX_BTSX | DATASOURCE: DATASOURCE_NLIS_311568 display=18.8');
+      },
+    },
+    {
+      name: 'appends the data_source predicate after the existing clauses and echoes it (#39)',
+      input: {
+        indicator_code: 'NUTRITION_564',
+        country_codes: ['BGD'],
+        year_from: 1992,
+        sex: 'SEX_BTSX',
+        data_source: 'DATASOURCE_NLIS_312831',
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$filter')).toBe(
+          "SpatialDimType eq 'COUNTRY' and SpatialDim in ('BGD') and TimeDim ge 1992 and Dim1Type eq 'SEX' and Dim1 eq 'SEX_BTSX' and DataSourceDim eq 'DATASOURCE_NLIS_312831'",
+        );
+        expect(result.structuredContent).toMatchObject({
+          appliedFilters: { dataSource: 'DATASOURCE_NLIS_312831' },
+        });
+        expect(textOf(result)).toContain('- **Data source:** DATASOURCE_NLIS_312831');
+      },
+    },
+    {
+      name: 'leaves rows without a data-source coordinate unchanged on both surfaces (#39)',
+      input: { indicator_code: 'UHC_INDEX_REPORTED', spatial_type: 'WORLDBANKREGION' },
+      assert: (result) => {
+        for (const row of (result.structuredContent as { rows: object[] }).rows) {
+          expect(row).not.toHaveProperty('dataSourceDim');
+          expect(row).not.toHaveProperty('dataSourceDimType');
+        }
+        expect(textOf(result)).not.toMatch(/DATASOURCE|DataSource/);
+      },
+    },
+    {
+      name: 'emits a spatial-type predicate for an aggregate geography (#40)',
+      input: {
+        indicator_code: 'WHOSIS_000001',
+        spatial_type: 'GLOBAL',
+        sex: 'SEX_BTSX',
+        year_from: 2021,
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$filter')).toBe(
+          "SpatialDimType eq 'GLOBAL' and TimeDim ge 2021 and Dim1Type eq 'SEX' and Dim1 eq 'SEX_BTSX'",
+        );
+        expect(result.structuredContent).toMatchObject({
+          appliedFilters: { spatialFilter: 'spatial_type: GLOBAL' },
+        });
+      },
+    },
+    {
+      name: 'narrows a spatial type to its codes and names the code that matched nothing (#40)',
+      input: {
+        indicator_code: 'UHC_INDEX_REPORTED',
+        spatial_type: 'WORLDBANKREGION',
+        spatial_codes: ['WB_SSA', 'NOPE'],
+      },
+      assert: (result) => {
+        expect(lastQuery().get('$filter')).toBe(
+          "SpatialDimType eq 'WORLDBANKREGION' and SpatialDim in ('WB_SSA','NOPE')",
+        );
+        expect(result.structuredContent).toMatchObject({
+          rows: [{ spatialDim: 'WB_SSA' }, { spatialDim: 'WB_SSA' }],
+          appliedFilters: {
+            spatialFilter: 'spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA,NOPE',
+          },
+          notice: 'Spatial codes with unknown code or no data for these filters: NOPE.',
+        });
+        const text = textOf(result);
+        expect(text).toContain('spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA,NOPE');
+        expect(text).toContain('no data for these filters: NOPE.');
+      },
+    },
   ],
   errors: [
     {
@@ -260,6 +402,30 @@ toolContractSuite(whoQueryIndicatorData, {
       input: { indicator_code: 'WHOSIS_000001', country_codes: ['JPN'], region_codes: ['EUR'] },
       code: JsonRpcErrorCode.ValidationError,
       reason: 'ambiguous_spatial_filter',
+    },
+    {
+      name: 'rejects spatial_type beside another spatial filter (#40)',
+      input: { indicator_code: 'WHOSIS_000001', spatial_type: 'GLOBAL', region_codes: ['EUR'] },
+      code: JsonRpcErrorCode.ValidationError,
+      reason: 'ambiguous_spatial_filter',
+    },
+    {
+      name: 'rejects spatial_codes without spatial_type (#40)',
+      input: { indicator_code: 'WHOSIS_000001', spatial_codes: ['WB_SSA'] },
+      code: JsonRpcErrorCode.ValidationError,
+      reason: 'spatial_codes_without_type',
+    },
+    {
+      name: 'reports a spatial type that matched no rows (#40)',
+      input: { indicator_code: 'GHO_EMPTY', spatial_type: 'NOPE' },
+      code: JsonRpcErrorCode.NotFound,
+      reason: 'no_data',
+    },
+    {
+      name: 'reports a data source that matched no rows (#39)',
+      input: { indicator_code: 'GHO_EMPTY', data_source: 'NLIS_312831' },
+      code: JsonRpcErrorCode.NotFound,
+      reason: 'no_data',
     },
     {
       name: 'rejects an inverted year range',

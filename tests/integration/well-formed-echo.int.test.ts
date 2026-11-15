@@ -237,6 +237,66 @@ describe('who_query_indicator_data echoes the applied filters', () => {
     ).toBe(`country_codes: JPN,${ASTRAL}`);
     expect(frame).toContain(ASTRAL);
   });
+
+  it('repairs an unpaired surrogate in the spatial_type/spatial_codes echo and unmatched-code notice (#40)', async () => {
+    respond = () => odata([DATA_ROW], 1);
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      spatial_type: `COUNTRY${LONE_SURROGATE}`,
+      spatial_codes: ['JPN', `NOPE${LONE_SURROGATE}`],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expectWellFormedFrame(result, 'who_query_indicator_data spatial_type frame');
+    const structured = result.structuredContent as {
+      appliedFilters?: { spatialFilter?: string };
+      notice?: string;
+    };
+    expect(structured.appliedFilters?.spatialFilter).toBe(
+      `spatial_type: COUNTRY${REPLACEMENT}; spatial_codes: JPN,NOPE${REPLACEMENT}`,
+    );
+    expect(structured.notice).toBe(
+      `Spatial codes with unknown code or no data for these filters: NOPE${REPLACEMENT}.`,
+    );
+  });
+
+  it('repairs an unpaired surrogate in the data_source echo (#39)', async () => {
+    respond = () => odata([DATA_ROW], 1);
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      data_source: `DATASOURCE_X${LONE_SURROGATE}`,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expectWellFormedFrame(result, 'who_query_indicator_data data_source frame');
+    expect(
+      (result.structuredContent as { appliedFilters?: { dataSource?: string } }).appliedFilters
+        ?.dataSource,
+    ).toBe(`DATASOURCE_X${REPLACEMENT}`);
+  });
+
+  it('leaves a paired astral character in the spatial_type, spatial_codes and data_source echoes byte-identical', async () => {
+    respond = () => odata([DATA_ROW], 1);
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      spatial_type: `COUNTRY${ASTRAL}`,
+      spatial_codes: [`JPN${ASTRAL}`],
+      data_source: `DATASOURCE_X${ASTRAL}`,
+    });
+
+    const frame = expectWellFormedFrame(result, 'who_query_indicator_data new-filter astral frame');
+    expect(result.structuredContent).toMatchObject({
+      appliedFilters: {
+        spatialFilter: `spatial_type: COUNTRY${ASTRAL}; spatial_codes: JPN${ASTRAL}`,
+        dataSource: `DATASOURCE_X${ASTRAL}`,
+      },
+      notice: `Spatial codes with unknown code or no data for these filters: JPN${ASTRAL}.`,
+    });
+    expect(frame).toContain(ASTRAL);
+  });
 });
 
 describe('who://indicator/{indicatorCode}/metadata echoes the code', () => {

@@ -246,18 +246,28 @@ export class GhoService {
     return this.retry(ctx, 'GhoService.queryData', async (signal) => {
       const filterParts: string[] = [];
 
-      // Spatial filter: at most one of country/region/income group
+      // Spatial filter: at most one of country/region/income group/caller-named type
+      const codeList = (codes: string[]) =>
+        codes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
       if (params.countryCodes?.length) {
-        const codes = params.countryCodes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
-        filterParts.push(`SpatialDimType eq 'COUNTRY' and SpatialDim in (${codes})`);
+        filterParts.push(
+          `SpatialDimType eq 'COUNTRY' and SpatialDim in (${codeList(params.countryCodes)})`,
+        );
       } else if (params.regionCodes?.length) {
-        const codes = params.regionCodes.map((c) => `'${this.escapeODataString(c)}'`).join(',');
-        filterParts.push(`SpatialDimType eq 'REGION' and SpatialDim in (${codes})`);
+        filterParts.push(
+          `SpatialDimType eq 'REGION' and SpatialDim in (${codeList(params.regionCodes)})`,
+        );
       } else if (params.incomeGroupCodes?.length) {
-        const codes = params.incomeGroupCodes
-          .map((c) => `'${this.escapeODataString(c)}'`)
-          .join(',');
-        filterParts.push(`SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in (${codes})`);
+        filterParts.push(
+          `SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in (${codeList(params.incomeGroupCodes)})`,
+        );
+      } else if (params.spatialType) {
+        const typeClause = `SpatialDimType eq '${this.escapeODataString(params.spatialType)}'`;
+        filterParts.push(
+          params.spatialCodes?.length
+            ? `${typeClause} and SpatialDim in (${codeList(params.spatialCodes)})`
+            : typeClause,
+        );
       }
 
       // Year range
@@ -274,6 +284,8 @@ export class GhoService {
         filterParts.push(`Dim2 eq '${this.escapeODataString(params.dim2Value)}'`);
       if (params.dim3Value)
         filterParts.push(`Dim3 eq '${this.escapeODataString(params.dim3Value)}'`);
+      if (params.dataSource)
+        filterParts.push(`DataSourceDim eq '${this.escapeODataString(params.dataSource)}'`);
 
       // Field selection
       const selectFields = [
@@ -289,6 +301,8 @@ export class GhoService {
         'Dim2',
         'Dim3Type',
         'Dim3',
+        'DataSourceDimType',
+        'DataSourceDim',
         'NumericValue',
         'Value',
         'Comments',
@@ -373,6 +387,9 @@ export class GhoService {
       ...(r.Dim2 && { dim2: r.Dim2 }),
       ...(r.Dim3Type && { dim3Type: r.Dim3Type }),
       ...(r.Dim3 && { dim3: r.Dim3 }),
+      // Estimates from different surveys can share every other coordinate of a row.
+      ...(r.DataSourceDimType && { dataSourceDimType: r.DataSourceDimType }),
+      ...(r.DataSourceDim && { dataSourceDim: r.DataSourceDim }),
       ...(r.NumericValue != null && { numericValue: r.NumericValue }),
       ...(includeUncertainty && r.Low != null && { low: r.Low }),
       ...(includeUncertainty && r.High != null && { high: r.High }),

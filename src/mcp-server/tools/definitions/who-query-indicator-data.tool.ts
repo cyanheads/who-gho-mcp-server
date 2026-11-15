@@ -36,7 +36,7 @@ const SORT_MODES = {
 export const whoQueryIndicatorData = tool('who_query_indicator_data', {
   title: 'Query WHO GHO Indicator Data',
   description:
-    'Query data rows for a single WHO GHO indicator with optional spatial, temporal, and dimension filters. Returns rows with numeric values, uncertainty intervals (Low/High), and spatial/time metadata. This is the primary data-fetching tool in the find-then-query workflow: use who_search_indicators to find the indicator code, optionally call who_get_indicator_metadata to confirm which filter dimensions are valid, then call this tool. Discover positional filters from returned dim1Type/dim1, dim2Type/dim2 and dim3Type/dim3 pairs; metadata alone does not identify a slot. Spatial filters are mutually exclusive per call: provide only one of country_codes, region_codes, or income_group_codes — mixing them triggers an error. Omitting all spatial filters returns all geographies (may be large; use limit to cap). The sex filter only applies when the indicator uses SEX as its first cross-cutting dimension — if not, the filter returns empty rows; check who_get_indicator_metadata first if uncertain. Rows are returned in a deterministic order (most recent first by default), so a capped result is the top of a defined slice rather than an arbitrary sample; page through the rest with offset.',
+    'Query data rows for a single WHO GHO indicator with optional spatial, temporal, and dimension filters. Returns rows with numeric values, uncertainty intervals (Low/High), and spatial/time metadata. This is the primary data-fetching tool in the find-then-query workflow: use who_search_indicators to find the indicator code, optionally call who_get_indicator_metadata to confirm which filter dimensions are valid, then call this tool. Discover positional filters from returned dim1Type/dim1, dim2Type/dim2 and dim3Type/dim3 pairs; metadata alone does not identify a slot. Spatial filters are mutually exclusive per call: provide only one of country_codes, region_codes, income_group_codes, or spatial_type — mixing them triggers an error. spatial_type selects any geography type rows carry in spatialDimType, including aggregates such as GLOBAL and WORLDBANKREGION; narrow it with spatial_codes. Omitting all spatial filters returns all geographies (may be large; use limit to cap). The sex filter only applies when the indicator uses SEX as its first cross-cutting dimension — on any other indicator the call fails with no_data; check who_get_indicator_metadata first if uncertain. Rows are returned in a deterministic order (most recent first by default), so a capped result is the top of a defined slice rather than an arbitrary sample; page through the rest with offset.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_code: z
@@ -49,21 +49,31 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .array(z.string().min(1))
       .optional()
       .describe(
-        'WHO country codes to filter on, e.g. ["JPN","USA","BRA"], including historical codes such as ME1 and SDN736. Discover codes with who_list_dimension_values dimension="COUNTRY". Mutually exclusive with region_codes and income_group_codes.',
+        'WHO country codes to filter on, e.g. ["JPN","USA","BRA"], including historical codes such as ME1 and SDN736. Discover codes with who_list_dimension_values dimension="COUNTRY". Mutually exclusive with region_codes, income_group_codes, and spatial_type.',
       ),
     region_codes: z
       .array(z.string().min(1))
       .optional()
       .describe(
-        'WHO region codes to filter on, e.g. ["AFR","EUR","AMR","EMR","SEAR","WPR"]. Returns the aggregate row for each named WHO region. To get country-level data for a region, use who_list_dimension_values with dimension="COUNTRY" and parent_code set to the region code to retrieve WHO country codes, then pass those to country_codes. Use who_list_dimension_values with dimension="REGION" to see all valid region codes. Mutually exclusive with country_codes and income_group_codes.',
+        'WHO region codes to filter on, e.g. ["AFR","EUR","AMR","EMR","SEAR","WPR"]. Returns the aggregate row for each named WHO region. For the world aggregate or another aggregate geography type, use spatial_type instead (e.g. spatial_type "GLOBAL"). To get country-level data for a region, use who_list_dimension_values with dimension="COUNTRY" and parent_code set to the region code to retrieve WHO country codes, then pass those to country_codes. Use who_list_dimension_values with dimension="REGION" to see all valid region codes. Mutually exclusive with country_codes, income_group_codes, and spatial_type.',
       ),
     income_group_codes: z
       .array(z.string().min(1))
       .optional()
       .describe(
-        'World Bank income group codes, e.g. ["WB_HI","WB_LMI","WB_LI","WB_UMI"]. ' +
-          'Use who_list_dimension_values with dimension="WORLDBANKINCOMEGROUP" to see all valid codes. ' +
-          'Mutually exclusive with country_codes and region_codes.',
+        'World Bank income group codes, e.g. ["WB_HI","WB_LMI","WB_LI","WB_UMI"]. Use who_list_dimension_values with dimension="WORLDBANKINCOMEGROUP" to see all valid codes. Mutually exclusive with country_codes, region_codes, and spatial_type.',
+      ),
+    spatial_type: z
+      .string()
+      .optional()
+      .describe(
+        'Geography type to return, matched against the spatialDimType rows carry, e.g. "GLOBAL" for the world aggregate, "WORLDBANKREGION", "UNSDGREGION", or "GBDREGION". Alone it returns every row of that type; narrow it with spatial_codes. Passed through as given — a type the indicator does not carry returns no_data. Mutually exclusive with country_codes, region_codes, and income_group_codes. Empty strings are ignored with a notice.',
+      ),
+    spatial_codes: z
+      .array(z.string().min(1))
+      .optional()
+      .describe(
+        'Codes narrowing spatial_type to specific geographies, e.g. ["WB_SSA"] with spatial_type "WORLDBANKREGION". Requires spatial_type. Discover codes with who_list_dimension_values, passing the spatial type as the dimension. Empty arrays are ignored with a notice.',
       ),
     year_from: z
       .number()
@@ -79,51 +89,52 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       .enum(SEX_VALUES)
       .optional()
       .describe(
-        'Filter on sex dimension: SEX_BTSX (both sexes), SEX_FMLE (female), SEX_MLE (male). ' +
-          'Only applies when the indicator uses SEX as its first cross-cutting dimension.',
+        'Filter on sex dimension: SEX_BTSX (both sexes), SEX_FMLE (female), SEX_MLE (male). Only applies when the indicator uses SEX as its first cross-cutting dimension.',
       ),
     dim1_value: z
       .string()
       .optional()
       .describe(
-        'Value filter for indicators whose first cross-cutting dimension is not SEX ' +
-          '(e.g. an AGEGROUP code like "YEARS05-14"). Ignored when sex is also provided.',
+        'Value filter for indicators whose first cross-cutting dimension is not SEX: the full prefixed code as returned in dim1, e.g. an AGEGROUP code like "AGEGROUP_YEARS05-14". Ignored when sex is also provided.',
       ),
     dim2_value: z
       .string()
       .optional()
       .describe(
-        'Value filter for the second cross-cutting dimension, e.g. AGEGROUP_DAYS0-27. Discover the position from returned dim2Type/dim2 pairs; metadata does not identify the slot. Empty strings are ignored with a notice.',
+        'Value filter for the second cross-cutting dimension: the full prefixed code as returned in dim2, e.g. AGEGROUP_DAYS0-27. Discover the position from returned dim2Type/dim2 pairs; metadata does not identify the slot. Empty strings are ignored with a notice.',
       ),
     dim3_value: z
       .string()
       .optional()
       .describe(
-        'Value filter for the third cross-cutting dimension, e.g. CHILDCAUSE_CH9. Discover the position from returned dim3Type/dim3 pairs; metadata does not identify the slot. Empty strings are ignored with a notice.',
+        'Value filter for the third cross-cutting dimension: the full prefixed code as returned in dim3, e.g. CHILDCAUSE_CH9. Discover the position from returned dim3Type/dim3 pairs; metadata does not identify the slot. Empty strings are ignored with a notice.',
+      ),
+    data_source: z
+      .string()
+      .optional()
+      .describe(
+        'Data-source filter for indicators that publish estimates from several surveys or sources for the same country, year, and sex: the full code, DATASOURCE_ prefix included, as returned in dataSourceDim or by who_list_dimension_values with dimension="DATASOURCE", e.g. "DATASOURCE_NLIS_312831". Passed through as given — a code that matches no row returns no_data. Composes with any spatial filter. Empty strings are ignored with a notice.',
       ),
     include_uncertainty: z
       .boolean()
       .default(true)
       .describe('Include Low and High uncertainty interval bounds in output. Default true.'),
     limit: readLimitSchema(1000)
-      .default(200)
-      .describe('Maximum number of data rows to return. Default 200, max 1000.'),
+      .default(25)
+      .describe('Maximum number of data rows to return. Default 25, max 1000.'),
     offset: z
       .number()
       .int()
       .min(0)
       .default(0)
       .describe(
-        'Zero-based row offset for pagination. Default 0. Pages are stable because rows are ' +
-          'returned in a deterministic order — read hasMore and nextOffset from the response to ' +
-          'continue. An offset at or beyond totalRows returns an empty rows array, not an error.',
+        'Zero-based row offset for pagination. Default 0. Pages are stable because rows are returned in a deterministic order — read hasMore and nextOffset from the response to continue. An offset at or beyond totalRows returns an empty rows array, not an error.',
       ),
     sort: z
       .enum(['year_desc', 'year_asc'])
       .default('year_desc')
       .describe(
-        'Row ordering: "year_desc" (default) returns the most recent years first, "year_asc" the ' +
-          'earliest first. Ties are broken by spatial code, then dimension, then row id.',
+        'Row ordering: "year_desc" (default) returns the most recent years first, "year_asc" the earliest first. Ties are broken by spatial code, then dimension, then row id.',
       ),
   }),
   output: z.object({
@@ -136,7 +147,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
               .string()
               .optional()
               .describe(
-                'Spatial dimension type: COUNTRY, REGION, WORLDBANKINCOMEGROUP, GLOBAL, etc.',
+                'Spatial dimension type: COUNTRY, REGION, WORLDBANKINCOMEGROUP, GLOBAL, etc. Pass to spatial_type to query every row of that type.',
               ),
             spatialDim: z
               .string()
@@ -146,16 +157,13 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
               .string()
               .optional()
               .describe(
-                'Name of the WHO region this row sits under, e.g. "Western Pacific" for a JPN row. ' +
-                  'Not a label for spatialDim itself — the upstream row carries no name for its own ' +
-                  'spatial entity. Absent when spatialDim is already a region or income group.',
+                'Name of the WHO region this row sits under, e.g. "Western Pacific" for a JPN row. Not a label for spatialDim itself — the upstream row carries no name for its own spatial entity. Absent when spatialDim is already a region or income group.',
               ),
             parentLocationCode: z
               .string()
               .optional()
               .describe(
-                'Code of the WHO region this row sits under, e.g. "WPR". Pass to region_codes to ' +
-                  "query that region's own aggregate rows. Absent alongside parentLocation.",
+                'Code of the WHO region this row sits under, e.g. "WPR". Pass to region_codes to query that region\'s own aggregate rows. Absent alongside parentLocation.',
               ),
             year: z
               .number()
@@ -181,6 +189,18 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
               .optional()
               .describe('Third cross-cutting dimension type, e.g. CHILDCAUSE.'),
             dim3: z.string().optional().describe('Third cross-cutting dimension value.'),
+            dataSourceDimType: z
+              .string()
+              .optional()
+              .describe(
+                'Data-source dimension type, "DATASOURCE" when the indicator records the source survey or estimate.',
+              ),
+            dataSourceDim: z
+              .string()
+              .optional()
+              .describe(
+                'Data-source code, e.g. "DATASOURCE_NLIS_312831". Rows that share country, year, and dimensions but differ here are estimates from different sources — compare within one source, or pass the code to data_source to select it.',
+              ),
             numericValue: z.number().optional().describe('Machine-readable numeric value.'),
             low: z
               .number()
@@ -219,7 +239,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           .string()
           .optional()
           .describe(
-            'Active spatial filter summary, e.g. "country_codes: JPN,USA" or "region_codes: EUR".',
+            'Active spatial filter summary, e.g. "country_codes: JPN,USA", "region_codes: EUR", or "spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA".',
           ),
         yearRange: z
           .string()
@@ -229,6 +249,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         dim1Value: z.string().optional().describe('dim1_value filter applied, if any.'),
         dim2Value: z.string().optional().describe('dim2_value filter applied, if any.'),
         dim3Value: z.string().optional().describe('dim3_value filter applied, if any.'),
+        dataSource: z.string().optional().describe('data_source filter applied, if any.'),
         ordering: z
           .string()
           .describe('Row ordering applied to the query, e.g. "most recent first (year_desc)".'),
@@ -251,7 +272,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     pageInfo: z
       .string()
       .describe(
-        'Human-readable page position, e.g. "offset 0, showing 200 of 12936". Use to construct the next offset.',
+        'Human-readable page position, e.g. "offset 0, showing 25 of 12936". Use to construct the next offset.',
       ),
     nextOffset: z
       .number()
@@ -279,6 +300,8 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         if (filters.dim1Value) parts.push(`- **Dim1:** ${escapeMarkdownInline(filters.dim1Value)}`);
         if (filters.dim2Value) parts.push(`- **Dim2:** ${escapeMarkdownInline(filters.dim2Value)}`);
         if (filters.dim3Value) parts.push(`- **Dim3:** ${escapeMarkdownInline(filters.dim3Value)}`);
+        if (filters.dataSource)
+          parts.push(`- **Data source:** ${escapeMarkdownInline(filters.dataSource)}`);
         parts.push(`- **Ordering:** ${escapeMarkdownInline(filters.ordering)}`);
         return `**Applied Filters:**\n${parts.join('\n')}`;
       },
@@ -298,15 +321,21 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       code: JsonRpcErrorCode.NotFound,
       when: 'The indicator exists but no data rows matched the applied filters.',
       recovery:
-        'Broaden the filters: remove year range, try different spatial codes, or remove the sex filter. ' +
-        'Use who_get_indicator_metadata to confirm which dimensions this indicator supports.',
+        'Broaden the filters: remove the year range, try different spatial codes or another spatial_type, or remove the sex, dim1_value, dim2_value, dim3_value, or data_source filter. dim1_value, dim2_value, and dim3_value take the full prefixed codes as returned in dim1, dim2, and dim3 (e.g. CHILDCAUSE_CH9), and data_source the full code as returned in dataSourceDim. Use who_get_indicator_metadata to confirm which dimensions this indicator supports.',
     },
     {
       reason: 'ambiguous_spatial_filter',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'More than one of country_codes, region_codes, or income_group_codes were provided.',
+      when: 'More than one of country_codes, region_codes, income_group_codes, or spatial_type were provided.',
       recovery:
-        'Provide only one spatial filter type per call. To compare countries and regions, make separate calls.',
+        'Provide only one of country_codes, region_codes, income_group_codes, or spatial_type per call. To compare countries and regions, make separate calls.',
+    },
+    {
+      reason: 'spatial_codes_without_type',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'spatial_codes was provided without spatial_type, so the codes name no geography type.',
+      recovery:
+        'Add spatial_type naming the geography type the codes belong to (e.g. WORLDBANKREGION), or pass country, WHO region, or income group codes through country_codes, region_codes, or income_group_codes instead.',
     },
     {
       reason: 'invalid_year_range',
@@ -320,7 +349,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'The GHO API rejected the generated OData query because a supplied filter value is not a valid literal.',
       recovery:
-        'Check the spatial codes and dim1_value, dim2_value, or dim3_value for stray quotes or punctuation, then confirm valid codes with who_list_dimension_values and retry.',
+        'Check the spatial codes, spatial_type, data_source, and dim1_value, dim2_value, or dim3_value for stray quotes or punctuation, then confirm valid codes with who_list_dimension_values and retry.',
     },
     {
       reason: 'malformed_identifier',
@@ -338,14 +367,22 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       'who_query_indicator_data',
       ctx,
     );
-    // Validate mutual exclusion of spatial filters
-    const spatialCount = [input.country_codes, input.region_codes, input.income_group_codes].filter(
-      (arr) => arr?.length,
-    ).length;
+    // Validate mutual exclusion of spatial filters. Empty arrays and an empty spatial_type
+    // are ignored (with a notice below), so they count as absent here too.
+    const spatialCount =
+      [input.country_codes, input.region_codes, input.income_group_codes].filter(
+        (arr) => arr?.length,
+      ).length + (input.spatial_type ? 1 : 0);
     if (spatialCount > 1) {
       throw ctx.fail(
         'ambiguous_spatial_filter',
-        'Provide only one of country_codes, region_codes, or income_group_codes per call.',
+        'Provide only one of country_codes, region_codes, income_group_codes, or spatial_type per call.',
+      );
+    }
+    if (input.spatial_codes?.length && !input.spatial_type) {
+      throw ctx.fail(
+        'spatial_codes_without_type',
+        'spatial_codes requires spatial_type, the geography type the codes belong to.',
       );
     }
 
@@ -380,12 +417,16 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       ...(input.country_codes?.length && { countryCodes: input.country_codes }),
       ...(input.region_codes?.length && { regionCodes: input.region_codes }),
       ...(input.income_group_codes?.length && { incomeGroupCodes: input.income_group_codes }),
+      ...(input.spatial_type && { spatialType: input.spatial_type }),
+      // Non-empty spatial_codes implies spatial_type — the guard above rejects the rest.
+      ...(input.spatial_codes?.length && { spatialCodes: input.spatial_codes }),
       ...(input.year_from != null && { yearFrom: input.year_from }),
       ...(input.year_to != null && { yearTo: input.year_to }),
       ...(input.sex && { sex: input.sex }),
       ...(!input.sex && input.dim1_value && { dim1Value: input.dim1_value }),
       ...(input.dim2_value && { dim2Value: input.dim2_value }),
       ...(input.dim3_value && { dim3Value: input.dim3_value }),
+      ...(input.data_source && { dataSource: input.data_source }),
     };
     const { rows, totalRows, truncated } = await getGhoService()
       .queryData(queryParams, ctx)
@@ -439,6 +480,10 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       spatialFilter = `region_codes: ${input.region_codes.map(wellFormed).join(',')}`;
     else if (input.income_group_codes?.length)
       spatialFilter = `income_group_codes: ${input.income_group_codes.map(wellFormed).join(',')}`;
+    else if (input.spatial_type)
+      spatialFilter = input.spatial_codes?.length
+        ? `spatial_type: ${wellFormed(input.spatial_type)}; spatial_codes: ${input.spatial_codes.map(wellFormed).join(',')}`
+        : `spatial_type: ${wellFormed(input.spatial_type)}`;
 
     const yearRange =
       input.year_from != null && input.year_to != null
@@ -460,6 +505,7 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
         ...(!input.sex && input.dim1_value && { dim1Value: wellFormed(input.dim1_value) }),
         ...(input.dim2_value && { dim2Value: wellFormed(input.dim2_value) }),
         ...(input.dim3_value && { dim3Value: wellFormed(input.dim3_value) }),
+        ...(input.data_source && { dataSource: wellFormed(input.data_source) }),
         ordering: sortMode.label,
       },
       totalRows,
@@ -471,10 +517,21 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
     });
 
     const notices: string[] = clampNotice ? [clampNotice] : [];
-    for (const field of ['country_codes', 'region_codes', 'income_group_codes'] as const) {
+    for (const field of [
+      'country_codes',
+      'region_codes',
+      'income_group_codes',
+      'spatial_codes',
+    ] as const) {
       if (input[field]?.length === 0) notices.push(`Ignored ${field}: the array is empty.`);
     }
-    for (const field of ['dim1_value', 'dim2_value', 'dim3_value'] as const) {
+    for (const field of [
+      'spatial_type',
+      'dim1_value',
+      'dim2_value',
+      'dim3_value',
+      'data_source',
+    ] as const) {
       if (input[field] === '') notices.push(`Ignored ${field}: the string is empty.`);
     }
     if (input.sex && input.dim1_value)
@@ -483,7 +540,9 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
       ? input.country_codes
       : input.region_codes?.length
         ? input.region_codes
-        : input.income_group_codes;
+        : input.income_group_codes?.length
+          ? input.income_group_codes
+          : input.spatial_codes;
     if (requestedCodes?.length && input.offset === 0 && !truncated) {
       const returnedCodes = new Set(
         rows.flatMap((row) => (row.spatialDim === undefined ? [] : [row.spatialDim.toUpperCase()])),
@@ -529,14 +588,18 @@ export const whoQueryIndicatorData = tool('who_query_indicator_data', {
           : undefined,
       ].filter((value) => value !== undefined);
       const parent = parentParts.length > 0 ? ` — parent: ${parentParts.join(' ')}` : '';
-      const dimensions = [
-        [row.dim1Type, row.dim1],
-        [row.dim2Type, row.dim2],
-        [row.dim3Type, row.dim3],
-      ]
-        .map(([type, value], index) => {
+      // The data-source coordinate renders like a dimension: it is what tells apart rows
+      // that are otherwise identical estimates from different surveys.
+      const coordinates: [type: string | undefined, value: string | undefined, label: string][] = [
+        [row.dim1Type, row.dim1, 'Dim1'],
+        [row.dim2Type, row.dim2, 'Dim2'],
+        [row.dim3Type, row.dim3, 'Dim3'],
+        [row.dataSourceDimType, row.dataSourceDim, 'DataSource'],
+      ];
+      const dimensions = coordinates
+        .map(([type, value, fallbackLabel]) => {
           if (type === undefined && value === undefined) return '';
-          const label = type === undefined ? `Dim${index + 1}` : escapeMarkdownInline(type);
+          const label = type === undefined ? fallbackLabel : escapeMarkdownInline(type);
           return value === undefined
             ? ` | ${label}`
             : ` | ${label}: ${escapeMarkdownInline(value)}`;

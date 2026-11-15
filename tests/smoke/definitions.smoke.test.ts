@@ -146,7 +146,7 @@ describe('tool definitions', () => {
       indicator_code: 'WHOSIS_000001',
       country_codes: ['JPN'],
       include_uncertainty: true,
-      limit: 200,
+      limit: 25,
       offset: 0,
       sort: 'year_desc',
     });

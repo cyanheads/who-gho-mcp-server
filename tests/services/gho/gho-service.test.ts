@@ -540,6 +540,155 @@ describe('GhoService — request construction', () => {
   );
 });
 
+describe('GhoService — data-source coordinate and aggregate spatial types (#39, #40)', () => {
+  let http: FetchMockHarness;
+
+  beforeEach(() => {
+    http = createFetchMock();
+    http.install();
+  });
+
+  afterEach(() => {
+    http.restore();
+  });
+
+  const serve = (value: unknown[]) =>
+    http.route({
+      match: (req) => req.url.startsWith(`${BASE}/WHOSIS_000001?`),
+      respond: () => Response.json({ '@odata.count': value.length, value }),
+    });
+
+  const filterOf = () => paramsOf(http).get('$filter');
+
+  /** Two estimates for one country, year and sex that differ only in their source survey. */
+  const sourcedRow = (dataSourceDim: string | null, numericValue: number) => ({
+    ...countryDataRow,
+    Dim1Type: 'SEX',
+    Dim1: 'SEX_BTSX',
+    DataSourceDimType: 'DATASOURCE',
+    DataSourceDim: dataSourceDim,
+    NumericValue: numericValue,
+    Value: String(numericValue),
+  });
+
+  it('characterizes a row served with null data-source fields as carrying neither', async () => {
+    serve([{ ...dataRow, DataSourceDimType: null, DataSourceDim: null }]);
+
+    const result = await newService().queryData(baseQueryParams, createMockContext());
+
+    expect(result.rows).toEqual([
+      {
+        indicatorCode: 'WHOSIS_000001',
+        year: 2021,
+        spatialDimType: 'COUNTRY',
+        spatialDim: 'JPN',
+        numericValue: 84.5,
+        displayValue: '84.5',
+      },
+    ]);
+  });
+
+  it('selects both data-source fields and keeps each source on its own row', async () => {
+    serve([
+      sourcedRow('DATASOURCE_NLIS_312831', 16.7),
+      sourcedRow('DATASOURCE_NLIS_311568', 18.8),
+      // Sparse upstream variant: a type without a code keeps only the type.
+      sourcedRow(null, 17.1),
+    ]);
+
+    const result = await newService().queryData(baseQueryParams, createMockContext());
+
+    // $select is a whitelist — without these two names the upstream never sends the fields.
+    expect(paramsOf(http).get('$select')!.split(',')).toEqual(
+      expect.arrayContaining(['DataSourceDimType', 'DataSourceDim']),
+    );
+    expect(
+      result.rows.map((row) => [row.dataSourceDimType, row.dataSourceDim, row.numericValue]),
+    ).toEqual([
+      ['DATASOURCE', 'DATASOURCE_NLIS_312831', 16.7],
+      ['DATASOURCE', 'DATASOURCE_NLIS_311568', 18.8],
+      ['DATASOURCE', undefined, 17.1],
+    ]);
+    expect(result.rows[2]).not.toHaveProperty('dataSourceDim');
+  });
+
+  it('appends the data-source predicate after every existing clause, apostrophes doubled', async () => {
+    serve([]);
+
+    await newService().queryData(
+      {
+        ...baseQueryParams,
+        countryCodes: ['BGD'],
+        yearFrom: 1992,
+        yearTo: 1992,
+        sex: 'SEX_BTSX',
+        dim2Value: 'AGEGROUP_YEARS0-4',
+        dim3Value: 'CHILDCAUSE_CH9',
+        dataSource: "DATASOURCE_NLIS'312831",
+      },
+      createMockContext(),
+    );
+
+    expect(filterOf()).toBe(
+      "SpatialDimType eq 'COUNTRY' and SpatialDim in ('BGD') and TimeDim ge 1992 and TimeDim le 1992 and Dim1Type eq 'SEX' and Dim1 eq 'SEX_BTSX' and Dim2 eq 'AGEGROUP_YEARS0-4' and Dim3 eq 'CHILDCAUSE_CH9' and DataSourceDim eq 'DATASOURCE_NLIS''312831'",
+    );
+  });
+
+  it.each([
+    [{}, ''],
+    [{ countryCodes: ['BGD'] }, "SpatialDimType eq 'COUNTRY' and SpatialDim in ('BGD') and "],
+    [{ regionCodes: ['SEAR'] }, "SpatialDimType eq 'REGION' and SpatialDim in ('SEAR') and "],
+    [
+      { incomeGroupCodes: ['WB_LMI'] },
+      "SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in ('WB_LMI') and ",
+    ],
+    [{ spatialType: 'GLOBAL' }, "SpatialDimType eq 'GLOBAL' and "],
+    [
+      { spatialType: 'WORLDBANKREGION', spatialCodes: ['WB_SSA'] },
+      "SpatialDimType eq 'WORLDBANKREGION' and SpatialDim in ('WB_SSA') and ",
+    ],
+  ])('composes the data-source predicate with spatial filter %j', async (spatial, prefix) => {
+    serve([]);
+
+    await newService().queryData(
+      { ...baseQueryParams, ...spatial, dataSource: 'DATASOURCE_NLIS_312831' },
+      createMockContext(),
+    );
+
+    expect(filterOf()).toBe(`${prefix}DataSourceDim eq 'DATASOURCE_NLIS_312831'`);
+  });
+
+  it('sends a spatial type alone in the spatial position, ahead of the year and sex clauses', async () => {
+    serve([]);
+
+    await newService().queryData(
+      { ...baseQueryParams, spatialType: 'GLOBAL', yearFrom: 2021, sex: 'SEX_BTSX' },
+      createMockContext(),
+    );
+
+    expect(filterOf()).toBe(
+      "SpatialDimType eq 'GLOBAL' and TimeDim ge 2021 and Dim1Type eq 'SEX' and Dim1 eq 'SEX_BTSX'",
+    );
+  });
+
+  it('narrows a spatial type to its codes and passes both through unvalidated, escaped', async () => {
+    serve([]);
+
+    await newService().queryData(
+      {
+        ...baseQueryParams,
+        spatialType: "worldbank'region",
+        spatialCodes: ['WB_SSA', "NO'PE"],
+      },
+      createMockContext(),
+    );
+
+    expect(filterOf()).toBe(
+      "SpatialDimType eq 'worldbank''region' and SpatialDim in ('WB_SSA','NO''PE')",
+    );
+  });
+});
+
 describe('GhoService — retry classification', () => {
   let http: FetchMockHarness;
 

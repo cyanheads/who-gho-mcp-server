@@ -37,6 +37,8 @@ export interface RawIndicatorDimension {
 /** Raw OData data row from GET /{IndicatorCode} */
 export interface RawDataRow {
   Comments?: string | null;
+  DataSourceDim?: string | null;
+  DataSourceDimType?: string | null;
   Date?: string;
   Dim1?: string;
   Dim1Type?: string;
@@ -100,6 +102,9 @@ export interface IndicatorMetadata extends Indicator {
 /** Normalized data row */
 export interface DataRow {
   comments?: string;
+  /** Source survey or estimate code, e.g. `DATASOURCE_NLIS_312831`; absent on indicators without one. */
+  dataSourceDim?: string;
+  dataSourceDimType?: string;
   dim1?: string;
   dim1Type?: string;
   dim2?: string;
@@ -123,6 +128,8 @@ export interface DataRow {
 /** Parameters for querying indicator data */
 export interface DataQueryParams {
   countryCodes?: string[];
+  /** Full `DATASOURCE` code, sent as `DataSourceDim eq '…'`. */
+  dataSource?: string;
   dim1Value?: string;
   dim2Value?: string;
   dim3Value?: string;
@@ -140,6 +147,10 @@ export interface DataQueryParams {
   orderBy: string;
   regionCodes?: string[];
   sex?: string;
+  /** `SpatialDim` codes narrowing `spatialType`; ignored without it. */
+  spatialCodes?: string[];
+  /** Any upstream `SpatialDimType` (e.g. `GLOBAL`, `WORLDBANKREGION`) — a fourth spatial filter. */
+  spatialType?: string;
   yearFrom?: number;
   yearTo?: number;
 }

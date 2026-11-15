@@ -3,6 +3,8 @@
  * @module tests/tools/who-query-indicator-data.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { whoQueryIndicatorData } from '@/mcp-server/tools/definitions/who-query-indicator-data.tool.js';
@@ -22,6 +24,26 @@ const sampleRow = {
   numericValue: 84.5,
   displayValue: '84.5',
 };
+
+type ContractResult = Awaited<ReturnType<typeof runToolContract>>;
+
+/** The assembled content[] text a content-only client reads: rows, filter trailer, notice. */
+const textOf = (result: ContractResult): string =>
+  result.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n');
+
+/** The rendered data-row lines; trailer lines open with `- **`, row lines with `- [`. */
+const rowLinesOf = (result: ContractResult): string[] =>
+  textOf(result)
+    .split('\n')
+    .filter((line) => line.startsWith('- ['));
+
+/** The public error envelope a failed contract call carries. */
+const errorOf = (result: ContractResult) =>
+  (
+    result.structuredContent as {
+      error: { code: number; data: { reason: string; recovery?: { hint?: string } } };
+    }
+  ).error;
 
 describe('whoQueryIndicatorData', () => {
   beforeEach(() => {
@@ -198,14 +220,14 @@ describe('whoQueryIndicatorData', () => {
 
   it('sets truncation notice in enrichment when results are truncated', async () => {
     mockService.queryData.mockResolvedValue({
-      rows: Array.from({ length: 200 }, (_, i) => ({ ...sampleRow, year: 2000 + i })),
+      rows: Array.from({ length: 25 }, (_, i) => ({ ...sampleRow, year: 2000 + i })),
       totalRows: 5000,
       truncated: true,
     });
     const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
     const input = whoQueryIndicatorData.input.parse({ indicator_code: 'WHOSIS_000001' });
     const result = await whoQueryIndicatorData.handler(input, ctx);
-    expect(result.rows).toHaveLength(200);
+    expect(result.rows).toHaveLength(25);
 
     const enrichment = getEnrichment(ctx);
     expect(enrichment.totalRows).toBe(5000);
@@ -474,7 +496,7 @@ describe('whoQueryIndicatorData — ordering (#13)', () => {
 
   it('names the returned slice in the truncation notice', async () => {
     mockService.queryData.mockResolvedValue({
-      rows: Array.from({ length: 200 }, () => sampleRow),
+      rows: Array.from({ length: 25 }, () => sampleRow),
       totalRows: 12936,
       truncated: true,
     });
@@ -483,7 +505,7 @@ describe('whoQueryIndicatorData — ordering (#13)', () => {
     await whoQueryIndicatorData.handler(input, ctx);
 
     const notice = getEnrichment(ctx).notice as string;
-    expect(notice).toContain('most recent 200 of 12936 rows');
+    expect(notice).toContain('most recent 25 of 12936 rows');
   });
 
   it('sorts a row with an absent year alongside dated rows without crashing', async () => {
@@ -529,26 +551,26 @@ describe('whoQueryIndicatorData — offset paging (#8)', () => {
 
   it('threads a non-zero offset through and advertises a reachable next page', async () => {
     mockService.queryData.mockResolvedValue({
-      rows: page(200, 200),
+      rows: page(25, 25),
       totalRows: 12936,
       truncated: true,
     });
     const ctx = createMockContext({ errors: whoQueryIndicatorData.errors });
     const input = whoQueryIndicatorData.input.parse({
       indicator_code: 'WHOSIS_000001',
-      offset: 200,
+      offset: 25,
     });
     await whoQueryIndicatorData.handler(input, ctx);
 
     expect(mockService.queryData).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 200, limit: 200 }),
+      expect.objectContaining({ offset: 25, limit: 25 }),
       ctx,
     );
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.offset).toBe(200);
+    expect(enrichment.offset).toBe(25);
     expect(enrichment.hasMore).toBe(true);
-    expect(enrichment.nextOffset).toBe(400);
-    expect(enrichment.pageInfo).toBe('offset 200, showing 200 of 12936');
+    expect(enrichment.nextOffset).toBe(50);
+    expect(enrichment.pageInfo).toBe('offset 25, showing 25 of 12936');
     // Never advertise an offset that cannot return a row.
     expect(enrichment.nextOffset as number).toBeLessThan(enrichment.totalRows as number);
   });
@@ -626,7 +648,7 @@ describe('whoQueryIndicatorData — offset paging (#8)', () => {
 
   it('writes exactly one notice carrying every applicable segment', async () => {
     mockService.queryData.mockResolvedValue({
-      rows: page(0, 200),
+      rows: page(0, 25),
       totalRows: 12936,
       truncated: true,
     });
@@ -638,8 +660,8 @@ describe('whoQueryIndicatorData — offset paging (#8)', () => {
     // truncated + paging guidance must coexist in one string; the framework's
     // enrich.truncated() default text must not have clobbered the composed notice.
     expect(enrichment.truncated).toBe(true);
-    expect(enrichment.notice).toContain('most recent 200 of 12936 rows');
-    expect(enrichment.notice).toContain('Request offset 200 for the next page');
+    expect(enrichment.notice).toContain('most recent 25 of 12936 rows');
+    expect(enrichment.notice).toContain('Request offset 25 for the next page');
     expect(enrichment.notice).not.toContain('Results capped at');
   });
 });
@@ -763,5 +785,470 @@ describe('whoQueryIndicatorData — malformed indicator code (#18)', () => {
       (e: unknown) => e,
     );
     expect(JSON.stringify(err)).not.toContain('\\ud800');
+  });
+});
+
+describe('whoQueryIndicatorData — data source (#39)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** One NUTRITION_564-shaped estimate; two of them differ only in their source. */
+  const sourcedRow = (dataSourceDim: string, numericValue: number) => ({
+    ...sampleRow,
+    indicatorCode: 'NUTRITION_564',
+    spatialDim: 'BGD',
+    year: 1992,
+    dim1Type: 'SEX',
+    dim1: 'SEX_BTSX',
+    dataSourceDimType: 'DATASOURCE',
+    dataSourceDim,
+    numericValue,
+    displayValue: String(numericValue),
+  });
+
+  it('carries the data-source coordinate on both surfaces, so two sources stay distinguishable', async () => {
+    const rows = [
+      sourcedRow('DATASOURCE_NLIS_312831', 16.7),
+      sourcedRow('DATASOURCE_NLIS_311568', 18.8),
+    ];
+    mockService.queryData.mockResolvedValue({ rows, totalRows: 2, truncated: false });
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'NUTRITION_564',
+      country_codes: ['BGD'],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ rows });
+    const lines = rowLinesOf(result);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('| SEX: SEX_BTSX | DATASOURCE: DATASOURCE_NLIS_312831 display=16.7');
+    expect(lines[1]).toContain('| SEX: SEX_BTSX | DATASOURCE: DATASOURCE_NLIS_311568 display=18.8');
+  });
+
+  it('threads data_source to the service and echoes it in appliedFilters and the trailer', async () => {
+    mockService.queryData.mockResolvedValue({
+      rows: [sourcedRow('DATASOURCE_NLIS_312831', 16.7)],
+      totalRows: 1,
+      truncated: false,
+    });
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'NUTRITION_564',
+      country_codes: ['BGD'],
+      data_source: 'DATASOURCE_NLIS_312831',
+    });
+
+    expect(mockService.queryData.mock.calls[0]![0]).toMatchObject({
+      countryCodes: ['BGD'],
+      dataSource: 'DATASOURCE_NLIS_312831',
+    });
+    expect(result.structuredContent).toMatchObject({
+      appliedFilters: {
+        spatialFilter: 'country_codes: BGD',
+        dataSource: 'DATASOURCE_NLIS_312831',
+      },
+    });
+    expect(textOf(result)).toContain('- **Data source:** DATASOURCE_NLIS_312831');
+  });
+
+  it('ignores an empty data_source with a notice and sends no predicate', async () => {
+    mockService.queryData.mockResolvedValue({ rows: [sampleRow], totalRows: 1, truncated: false });
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      data_source: '',
+    });
+
+    expect(mockService.queryData.mock.calls[0]![0]).not.toHaveProperty('dataSource');
+    const structured = result.structuredContent as { notice?: string; appliedFilters: object };
+    expect(structured.notice).toBe('Ignored data_source: the string is empty.');
+    expect(structured.appliedFilters).not.toHaveProperty('dataSource');
+    expect(textOf(result)).toContain('Ignored data_source: the string is empty.');
+    expect(textOf(result)).not.toContain('Data source:');
+  });
+
+  it.each([
+    [{ country_codes: ['BGD'] }, { countryCodes: ['BGD'] }],
+    [{ region_codes: ['SEAR'] }, { regionCodes: ['SEAR'] }],
+    [{ income_group_codes: ['WB_LMI'] }, { incomeGroupCodes: ['WB_LMI'] }],
+    [{ spatial_type: 'GLOBAL' }, { spatialType: 'GLOBAL' }],
+  ])(
+    'composes data_source with %j without counting it as a spatial filter',
+    async (spatial, wired) => {
+      mockService.queryData.mockResolvedValue({
+        rows: [sampleRow],
+        totalRows: 1,
+        truncated: false,
+      });
+
+      const result = await runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'NUTRITION_564',
+        ...spatial,
+        data_source: 'DATASOURCE_NLIS_312831',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockService.queryData.mock.calls[0]![0]).toMatchObject({
+        ...wired,
+        dataSource: 'DATASOURCE_NLIS_312831',
+      });
+    },
+  );
+
+  it('renders a sparse data-source coordinate without inventing the missing half', () => {
+    const text = (
+      whoQueryIndicatorData.format!({
+        rows: [
+          { indicatorCode: 'X', dataSourceDimType: 'DATASOURCE' },
+          { indicatorCode: 'X', dataSourceDim: 'DATASOURCE_A' },
+          { indicatorCode: 'X' },
+        ],
+      })[0] as { type: 'text'; text: string }
+    ).text;
+    const lines = text.split('\n').filter((line) => line.startsWith('- ['));
+
+    expect(lines[0]).toMatch(/\| DATASOURCE$/);
+    expect(lines[1]).toContain('| DataSource: DATASOURCE_A');
+    expect(lines[2]).not.toMatch(/DATASOURCE|DataSource/);
+    expect(text).not.toContain('undefined');
+  });
+});
+
+describe('whoQueryIndicatorData — aggregate spatial types (#40)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const aggregateRow = (spatialDimType: string, spatialDim: string, year: number) => ({
+    ...sampleRow,
+    spatialDimType,
+    spatialDim,
+    year,
+  });
+
+  it('threads spatial_type alone and echoes it as the active spatial filter', async () => {
+    mockService.queryData.mockResolvedValue({
+      rows: [2023, 2022, 2021].map((year) => aggregateRow('GLOBAL', 'GLOBAL', year)),
+      totalRows: 3,
+      truncated: false,
+    });
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+      spatial_type: 'GLOBAL',
+      sex: 'SEX_BTSX',
+      year_from: 2021,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const params = mockService.queryData.mock.calls[0]![0];
+    expect(params).toMatchObject({ spatialType: 'GLOBAL', sex: 'SEX_BTSX', yearFrom: 2021 });
+    expect(params).not.toHaveProperty('spatialCodes');
+    const structured = result.structuredContent as {
+      appliedFilters: { spatialFilter?: string };
+      notice?: string;
+    };
+    expect(structured.appliedFilters.spatialFilter).toBe('spatial_type: GLOBAL');
+    expect(structured.notice).toBeUndefined();
+    expect(textOf(result)).toContain('- **Spatial:** spatial_type: GLOBAL');
+    expect(rowLinesOf(result)).toHaveLength(3);
+  });
+
+  it('narrows to spatial_codes, echoes both, and names the unmatched code on a complete first page', async () => {
+    mockService.queryData.mockResolvedValue({
+      rows: [2021, 2019].map((year) => aggregateRow('WORLDBANKREGION', 'WB_SSA', year)),
+      totalRows: 2,
+      truncated: false,
+    });
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'UHC_INDEX_REPORTED',
+      spatial_type: 'WORLDBANKREGION',
+      spatial_codes: ['WB_SSA', 'NOPE'],
+    });
+
+    expect(mockService.queryData.mock.calls[0]![0]).toMatchObject({
+      spatialType: 'WORLDBANKREGION',
+      spatialCodes: ['WB_SSA', 'NOPE'],
+    });
+    expect(result.structuredContent).toMatchObject({
+      appliedFilters: {
+        spatialFilter: 'spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA,NOPE',
+      },
+      notice: 'Spatial codes with unknown code or no data for these filters: NOPE.',
+    });
+    expect(textOf(result)).toContain(
+      '- **Spatial:** spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA,NOPE',
+    );
+    expect(textOf(result)).toContain('unknown code or no data for these filters: NOPE.');
+  });
+
+  it.each(['country_codes', 'region_codes', 'income_group_codes'])(
+    'rejects spatial_type beside %s as ambiguous before any upstream call',
+    async (field) => {
+      const result = await runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        spatial_type: 'GLOBAL',
+        [field]: ['X'],
+      });
+
+      expect(result.isError).toBe(true);
+      expect(errorOf(result).data.reason).toBe('ambiguous_spatial_filter');
+      expect(errorOf(result).data.recovery?.hint).toContain('spatial_type');
+      expect(textOf(result)).toContain('spatial_type');
+      expect(mockService.queryData).not.toHaveBeenCalled();
+    },
+  );
+
+  it('lists spatial_type in the ambiguous_spatial_filter contract entry', () => {
+    const entry = whoQueryIndicatorData.errors!.find(
+      (e) => e.reason === 'ambiguous_spatial_filter',
+    )!;
+    expect(entry.when).toContain('spatial_type');
+    expect(entry.recovery).toContain('spatial_type');
+  });
+
+  it.each([
+    { spatial_codes: ['WB_SSA'] },
+    { spatial_type: '', spatial_codes: ['WB_SSA'] },
+    { country_codes: ['JPN'], spatial_codes: ['WB_SSA'] },
+  ])(
+    'rejects non-empty spatial_codes without spatial_type before any upstream call: %j',
+    async (filters) => {
+      const result = await runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        ...filters,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(errorOf(result).code).toBe(JsonRpcErrorCode.ValidationError);
+      expect(errorOf(result).data.reason).toBe('spatial_codes_without_type');
+      expect(errorOf(result).data.recovery?.hint).toContain('spatial_type');
+      expect(textOf(result)).toContain('spatial_type');
+      expect(mockService.queryData).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [{ spatial_type: '' }, {}, undefined, 'Ignored spatial_type: the string is empty.'],
+    [
+      { spatial_type: '', country_codes: ['JPN'] },
+      { countryCodes: ['JPN'] },
+      'country_codes: JPN',
+      'Ignored spatial_type: the string is empty.',
+    ],
+    [
+      { spatial_type: 'GLOBAL', spatial_codes: [] },
+      { spatialType: 'GLOBAL' },
+      'spatial_type: GLOBAL',
+      'Ignored spatial_codes: the array is empty.',
+    ],
+    [{ spatial_codes: [] }, {}, undefined, 'Ignored spatial_codes: the array is empty.'],
+  ])(
+    'ignores an empty %j with a notice instead of filtering on it',
+    async (filters, wired, echo, notice) => {
+      mockService.queryData.mockResolvedValue({
+        rows: [sampleRow],
+        totalRows: 1,
+        truncated: false,
+      });
+
+      const result = await runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'WHOSIS_000001',
+        ...filters,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const params = mockService.queryData.mock.calls[0]![0];
+      expect(params).toMatchObject(wired);
+      if (!('spatialType' in wired)) expect(params).not.toHaveProperty('spatialType');
+      expect(params).not.toHaveProperty('spatialCodes');
+      const structured = result.structuredContent as {
+        appliedFilters: { spatialFilter?: string };
+        notice?: string;
+      };
+      expect(structured.appliedFilters.spatialFilter).toBe(echo);
+      expect(structured.notice).toBe(notice);
+      expect(textOf(result)).toContain(notice);
+    },
+  );
+});
+
+describe('whoQueryIndicatorData — new filter echoes across page shapes (#39, #40)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const row = { ...sampleRow, spatialDimType: 'WORLDBANKREGION', spatialDim: 'WB_SSA' };
+
+  it.each([
+    {
+      shape: 'capped',
+      page: { rows: [row], totalRows: 3, truncated: true },
+      offset: 0,
+      expected: { hasMore: true, nextOffset: 1 },
+      notice: 'Request offset 1 for the next page',
+    },
+    {
+      shape: 'under-cap',
+      page: { rows: [row], totalRows: 1, truncated: false },
+      offset: 0,
+      expected: { hasMore: false },
+      notice: undefined,
+    },
+    {
+      shape: 'past-the-end',
+      page: { rows: [], totalRows: 3, truncated: false },
+      offset: 5,
+      expected: { hasMore: false },
+      notice: 'last reachable offset is 2',
+    },
+  ])(
+    'echoes spatial_type, spatial_codes and data_source on a $shape page',
+    async ({ page, offset, expected, notice }) => {
+      mockService.queryData.mockResolvedValue(page);
+
+      const result = await runToolContract(whoQueryIndicatorData, {
+        indicator_code: 'UHC_INDEX_REPORTED',
+        spatial_type: 'WORLDBANKREGION',
+        spatial_codes: ['WB_SSA'],
+        data_source: 'DATASOURCE_X',
+        limit: 1,
+        offset,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        appliedFilters: {
+          spatialFilter: 'spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA',
+          dataSource: 'DATASOURCE_X',
+        },
+        ...expected,
+      });
+      if (!('nextOffset' in expected)) {
+        expect(result.structuredContent).not.toHaveProperty('nextOffset');
+      }
+      const text = textOf(result);
+      expect(text).toContain('- **Spatial:** spatial_type: WORLDBANKREGION; spatial_codes: WB_SSA');
+      expect(text).toContain('- **Data source:** DATASOURCE_X');
+      const structuredNotice = (result.structuredContent as { notice?: string }).notice;
+      if (notice === undefined) expect(structuredNotice).toBeUndefined();
+      else {
+        expect(structuredNotice).toContain(notice);
+        expect(text).toContain(notice);
+      }
+    },
+  );
+});
+
+describe('whoQueryIndicatorData — no_data recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const noDataResult = async () => {
+    mockService.queryData.mockResolvedValue({ rows: [], totalRows: 0, truncated: false });
+    return runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'MORT_100',
+      country_codes: ['NGA'],
+      dim3_value: 'CH9',
+    });
+  };
+
+  it('characterizes the no_data failure: the declared hint on both surfaces, pointing at metadata', async () => {
+    const result = await noDataResult();
+
+    expect(result.isError).toBe(true);
+    const { data } = errorOf(result);
+    expect(data.reason).toBe('no_data');
+    expect(data.recovery?.hint).toContain('year range');
+    expect(data.recovery?.hint).toContain('who_get_indicator_metadata');
+    expect(textOf(result)).toContain(data.recovery!.hint!);
+  });
+
+  it('names every filter that can empty a result and the prefixed form dim values take (#39, #40, #41)', async () => {
+    const result = await noDataResult();
+
+    const hint = errorOf(result).data.recovery!.hint!;
+    for (const name of [
+      'spatial_type',
+      'sex',
+      'dim1_value',
+      'dim2_value',
+      'dim3_value',
+      'data_source',
+      'full prefixed codes as returned in dim1, dim2, and dim3',
+    ])
+      expect(hint).toContain(name);
+    expect(textOf(result)).toContain(hint);
+  });
+});
+
+describe('whoQueryIndicatorData — definition language (#41, F2)', () => {
+  const inputProperties = () =>
+    (
+      z.toJSONSchema(whoQueryIndicatorData.input) as {
+        properties: Record<string, { description?: string }>;
+      }
+    ).properties;
+
+  it('offers prefixed cross-cutting codes as dim*_value examples and says so per slot', () => {
+    const properties = inputProperties();
+    expect(properties.dim1_value?.description).toContain('AGEGROUP_YEARS05-14');
+    for (const slot of [1, 2, 3])
+      expect(properties[`dim${slot}_value`]?.description).toContain(
+        `full prefixed code as returned in dim${slot}`,
+      );
+  });
+
+  it('offers no unprefixed cross-cutting dimension value on any caller-visible surface', () => {
+    const surface = JSON.stringify([
+      whoQueryIndicatorData.description,
+      z.toJSONSchema(whoQueryIndicatorData.input),
+      z.toJSONSchema(whoQueryIndicatorData.output),
+      whoQueryIndicatorData.errors,
+    ]);
+    expect(surface).not.toMatch(/(?<!AGEGROUP_)YEARS\d/);
+    expect(surface).not.toMatch(/\bCH\d/);
+  });
+
+  it('says a sex filter on an indicator without SEX fails with no_data rather than returning rows (F2)', () => {
+    expect(whoQueryIndicatorData.description).not.toContain('returns empty rows');
+    expect(whoQueryIndicatorData.description).toContain('the call fails with no_data');
+  });
+});
+
+describe('whoQueryIndicatorData — default page size (#43)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('defaults to a 25-row page and advertises the continuation on both surfaces', async () => {
+    mockService.queryData.mockResolvedValue({
+      rows: Array.from({ length: 25 }, (_, i) => ({ ...sampleRow, year: 2023 - i })),
+      totalRows: 12936,
+      truncated: true,
+    });
+
+    const result = await runToolContract(whoQueryIndicatorData, {
+      indicator_code: 'WHOSIS_000001',
+    });
+
+    expect(mockService.queryData).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 25, offset: 0 }),
+      expect.anything(),
+    );
+    expect(result.structuredContent).toMatchObject({
+      hasMore: true,
+      nextOffset: 25,
+      pageInfo: 'offset 0, showing 25 of 12936',
+    });
+    expect((result.structuredContent as { notice: string }).notice).toContain(
+      'Request offset 25 for the next page',
+    );
+    expect(textOf(result)).toContain('Request offset 25 for the next page');
+    expect(rowLinesOf(result)).toHaveLength(25);
   });
 });
