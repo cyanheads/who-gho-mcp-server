@@ -247,6 +247,8 @@ input:
   data_source: string? — full DataSourceDim code (e.g. "DATASOURCE_NLIS_312831"); composes with any spatial filter
   include_uncertainty: boolean (default true) — whether to include Low/High bounds in output
   limit: number (default 25, max 1000)
+  offset: number (default 0) — zero-based row offset; at or beyond totalRows returns an empty page
+  sort: enum (default "year_desc") — "year_desc" | "year_asc"; ties broken by spatial code, dimension, then row id
 output:
   rows: Array<{
     indicatorCode: string,
@@ -295,7 +297,7 @@ Note: filtering by `SpatialDim in (...)` without a `SpatialDimType` filter works
 
 **Year filter:** `TimeDim ge {year_from} and TimeDim le {year_to}` appended when provided.
 
-**Cross-cutting filters:** `sex` adds `Dim1Type eq 'SEX' and Dim1 eq '{sex}'` and takes precedence over `dim1_value`. Positional values add escaped equality predicates on Dim1, Dim2, or Dim3. Discover positions from observation type/value pairs: metadata alone does not identify a slot. Empty values are ignored with a notice, and applied-filter echoes include only predicates actually used.
+**Cross-cutting filters:** `sex` adds `Dim1Type eq 'SEX' and Dim1 eq '{sex}'` and takes precedence over `dim1_value`. Positional values add escaped equality predicates on Dim1, Dim2, or Dim3, and `data_source` adds `DataSourceDim eq '{code}'` after them. Discover positions from observation type/value pairs: metadata alone does not identify a slot. Empty values are ignored with a notice, and applied-filter echoes include only predicates actually used.
 
 ### `who_list_dimension_values`
 
