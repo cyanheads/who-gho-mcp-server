@@ -9,7 +9,7 @@
 | `who_search_indicators` | Search the 3,102-indicator catalog by independently matched words in indicator names, with exact-code fallback when names have no matches. | `query`, `limit`, `offset` | `readOnlyHint: true` |
 | `who_list_indicators` | List indicators with optional pagination. Use for browsing when you don't have a keyword, or to page through the full catalog. | `limit`, `offset` | `readOnlyHint: true` |
 | `who_get_indicator_metadata` | Resolve canonical names and dimension types; types do not identify positional slots. Process 10 entries per call with continuation. | `indicator_codes` | `readOnlyHint: true` |
-| `who_query_indicator_data` | Query one indicator with spatial, temporal, sex, and positional dimension filters. Return observations with sparse coordinates and uncertainty bounds preserved. | `indicator_code`, spatial codes, years, `sex`, `dim1_value`, `dim2_value`, `dim3_value`, `limit`, `offset` | `readOnlyHint: true` |
+| `who_query_indicator_data` | Query one indicator with spatial, temporal, sex, and positional dimension filters. Return observations with sparse coordinates and uncertainty bounds preserved. | `indicator_code`, spatial codes, `spatial_type`, `spatial_codes`, years, `sex`, `dim1_value`, `dim2_value`, `dim3_value`, `data_source`, `limit`, `offset` | `readOnlyHint: true` |
 | `who_list_dimension_values` | List valid codes and labels for a dimension type (COUNTRY, REGION, SEX, WORLDBANKINCOMEGROUP, AGEGROUP, etc.). Use to discover valid filter values before calling `who_query_indicator_data`. | `dimension` | `readOnlyHint: true` |
 | `who_list_dimensions` | List all dimension type codes and titles available in the GHO API. Use to discover valid dimension codes for `who_list_dimension_values`. | _(none)_ | `readOnlyHint: true` |
 
@@ -55,7 +55,8 @@ Primary use case is the find-then-query workflow: search/browse indicators → g
 - OData $select, $orderby, $top, $skip, $count all work
 - Invalid indicator code → HTTP 404 (empty body). Invalid filter value → HTTP 200 with empty `value` array. Invalid dimension code in `/DIMENSION/{code}/DimensionValues` → HTTP 200 with empty `value` array (not a 404).
 - Unknown indicator code in `/IndicatorDimension?$filter=IndicatorCode eq '...'` → HTTP 200 with empty `value` array (not a 404). Resolve existence separately against the Indicator catalog; a valid catalog entry can have no dimension listing.
-- `UNREGION` and `UNSDGREGION` are additional `SpatialDimType` values present in real data rows (e.g., numeric UN region codes like `"513"` for `UNREGION`). These are not filterable via the spatial filter parameters — they appear in unfiltered results.
+- `UNREGION`, `UNSDGREGION`, `WORLDBANKREGION`, `GBDREGION`, `UNICEFREGION`, and `MGHEREG` are additional `SpatialDimType` values present in real data rows (e.g., numeric UN region codes like `"513"` for `UNREGION`). They are reachable through `spatial_type` (optionally narrowed with `spatial_codes`) and also appear in unfiltered results.
+- Some indicators carry a `DataSourceDimType` / `DataSourceDim` coordinate (`DATASOURCE` / `DATASOURCE_*`): estimates from different surveys for the same country, year, and sex are separate rows with identical other coordinates. `data_source` selects one.
 - Metadata lists dimension types without positions. Inspect returned `dim1Type`/`dim1`, `dim2Type`/`dim2`, and `dim3Type`/`dim3` pairs before selecting positional filters. For example, `MORT_100` rows can carry SEX, AGEGROUP, and CHILDCAUSE in positions 1, 2, and 3. Missing coordinates remain absent.
 - No official rate limit documented. Public API, generous limits observed in practice.
 
@@ -114,7 +115,7 @@ The GHO OData API has a clear three-layer model:
 |:------|:-----|:------|
 | `Id` | int | Row ID |
 | `IndicatorCode` | string | e.g. `WHOSIS_000001` |
-| `SpatialDimType` | string | `COUNTRY`, `REGION`, `WORLDBANKINCOMEGROUP`, `GLOBAL`, `UNREGION`, `UNSDGREGION`, etc. |
+| `SpatialDimType` | string | `COUNTRY`, `REGION`, `WORLDBANKINCOMEGROUP`, `GLOBAL`, `UNREGION`, `UNSDGREGION`, `WORLDBANKREGION`, `GBDREGION`, `UNICEFREGION`, `MGHEREG`, etc. |
 | `SpatialDim` | string | e.g. `JPN`, `AFR`, `WB_HI`, `"30"` (numeric string for UNREGION) |
 | `TimeDimType` | string | `YEAR` |
 | `TimeDim` | int | e.g. `2021` |
@@ -123,11 +124,12 @@ The GHO OData API has a clear three-layer model:
 | `Dim1Type` / `Dim1` | string? | First cross-cutting dimension type + value. SEX is consistently `Dim1Type` when present (e.g. `SEX` / `SEX_BTSX`). |
 | `Dim2Type` / `Dim2` | string? | Second cross-cutting dimension. AGEGROUP appears here when the indicator also uses SEX as Dim1. Other types (ENVCAUSE, etc.) also appear as Dim2. |
 | `Dim3Type` / `Dim3` | string? | Third cross-cutting dimension (rare) |
+| `DataSourceDimType` / `DataSourceDim` | string? | Data-source coordinate on indicators that publish estimates from several sources (e.g. `DATASOURCE` / `DATASOURCE_NLIS_312831`). Returned as `dataSourceDimType` / `dataSourceDim`; filtered with `data_source`. |
 | `NumericValue` | decimal? | Machine-readable value |
 | `Low` / `High` | decimal? | Uncertainty interval bounds |
 | `Value` | string? | Formatted display value, e.g. `"84.5 [84.5-84.5]"` |
 | `Comments` | string? | Data source notes |
-| `Date` | datetime | Last updated timestamp |
+| `Date` | datetime | Record timestamp; not selected or exposed by the tools, and not a documented data-currency signal |
 | `TimeDimensionValue` | string | Year as string, e.g. `"2021"` (redundant with `TimeDim` but present in full response) |
 | `TimeDimensionBegin` / `TimeDimensionEnd` | datetime | ISO 8601 year boundary datetimes (present in full response, not needed in $select) |
 
@@ -163,7 +165,7 @@ The GHO OData API has a clear three-layer model:
 |:--|:-----|:--------|
 | 1 | `GET /{indicatorCode}?$filter=...&$select=...&$orderby=...&$top=...` | Fetch data rows filtered by country/region/year/sex/income group |
 
-The tool builds one OData request. No multi-step orchestration needed — OData's $filter handles all the composition. The `SpatialDimType` filter is the key lever: pass `COUNTRY` + `SpatialDim in ('JPN','USA')` for specific countries; pass `WORLDBANKINCOMEGROUP` + `SpatialDim in ('WB_HI')` for income groups; omit spatial filters to get all geographies (may be large).
+The tool builds one OData request. No multi-step orchestration needed — OData's $filter handles all the composition. The `SpatialDimType` filter is the key lever: pass `COUNTRY` + `SpatialDim in ('JPN','USA')` for specific countries; pass `WORLDBANKINCOMEGROUP` + `SpatialDim in ('WB_HI')` for income groups; pass any other `SpatialDimType` (`GLOBAL`, `WORLDBANKREGION`, ...) through `spatial_type`; omit spatial filters to get all geographies (may be large).
 
 ---
 
@@ -196,7 +198,11 @@ input:
 output:
   indicators: Array<{ indicatorCode: string, indicatorName: string }>
   totalCount: number
+  offset: number — offset this page started at
   hasMore: boolean
+  pageInfo: string — "offset {offset}, showing {returned} of {totalCount}"
+  nextOffset: number? — continuation offset, present only when hasMore
+  notice: string? — limit clamp, paging, or past-end guidance
 annotations: readOnlyHint: true, openWorldHint: false
 ```
 
@@ -230,14 +236,17 @@ input:
   country_codes: string[]? — WHO country codes e.g. ["JPN","USA"], including historical codes
   region_codes: string[]? — WHO region codes e.g. ["AFR","EUR"]
   income_group_codes: string[]? — World Bank codes e.g. ["WB_HI","WB_LMI"]
+  spatial_type: string? — any SpatialDimType rows carry, e.g. "GLOBAL", "WORLDBANKREGION"; alone returns every row of that type
+  spatial_codes: string[]? — narrows spatial_type to specific codes; requires spatial_type
   year_from: number? — start year inclusive
   year_to: number? — end year inclusive
   sex: enum? — "SEX_BTSX" | "SEX_FMLE" | "SEX_MLE"
-  dim1_value: string? — arbitrary Dim1 filter; sex takes precedence with a notice
-  dim2_value: string? — value in the observed second dimension position
-  dim3_value: string? — value in the observed third dimension position
+  dim1_value: string? — full prefixed Dim1 code (e.g. "AGEGROUP_YEARS05-14"); sex takes precedence with a notice
+  dim2_value: string? — full prefixed code in the observed second dimension position
+  dim3_value: string? — full prefixed code in the observed third dimension position
+  data_source: string? — full DataSourceDim code (e.g. "DATASOURCE_NLIS_312831"); composes with any spatial filter
   include_uncertainty: boolean (default true) — whether to include Low/High bounds in output
-  limit: number (default 200, max 1000)
+  limit: number (default 25, max 1000)
 output:
   rows: Array<{
     indicatorCode: string,
@@ -252,27 +261,37 @@ output:
     dim2: string?,       -- Dim2 value when present
     dim3Type: string?,   -- Third dimension type when present
     dim3: string?,       -- Third dimension value when present
+    dataSourceDimType: string?,  -- "DATASOURCE" when the indicator records the source
+    dataSourceDim: string?,      -- Data-source code; rows differing only here are estimates from different sources
     numericValue: number?,
     low: number?,
     high: number?,
     displayValue: string?,
     comments: string?
   }>
+  appliedFilters: { indicatorCode, spatialFilter?, yearRange?, sex?, dim1Value?, dim2Value?, dim3Value?, dataSource?, ordering }
   totalRows: number  -- $count from OData
+  totalCount: number  -- alias of totalRows
   truncated: boolean?  -- true when rows remain after this page
+  offset: number  -- offset this page started at
   hasMore: boolean
+  pageInfo: string  -- "offset {offset}, showing {returned} of {totalRows}"
   nextOffset: number?  -- continuation offset
   notice: string?  -- composed filter, limit, and pagination guidance
 errors:
   - indicator_not_found: NotFound — 404 on /{indicatorCode}
   - no_data: NotFound — valid indicator, empty result for given filters
-  - ambiguous_spatial_filter: ValidationError — when more than one of country_codes, region_codes, income_group_codes are provided (SpatialDimType can only be one per request)
+  - ambiguous_spatial_filter: ValidationError — when more than one of country_codes, region_codes, income_group_codes, spatial_type are provided (SpatialDimType can only be one per request)
+  - spatial_codes_without_type: ValidationError — spatial_codes provided without spatial_type
+  - invalid_year_range: ValidationError — year_from is greater than year_to
+  - invalid_query: ValidationError — the GHO API rejected the generated OData query (a filter value is not a valid literal)
+  - malformed_identifier: ValidationError — indicator_code carries an unpaired UTF-16 surrogate
 annotations: readOnlyHint: true, openWorldHint: false
 ```
 
-**Spatial filter design note:** OData data rows are stamped with exactly one `SpatialDimType`. A filter combining `SpatialDimType eq 'COUNTRY' and SpatialDim in ('JPN')` works correctly (verified). If more than one of `country_codes`, `region_codes`, `income_group_codes` are provided, the tool errors with a clear message rather than silently dropping one spatial type. If only `country_codes` are provided, `SpatialDimType eq 'COUNTRY' and SpatialDim in (...)` is used. If only `region_codes`, `SpatialDimType eq 'REGION' and SpatialDim in (...)`. If only `income_group_codes`, `SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in (...)`. If none are provided, no spatial filter is applied (returns all geographies including UNREGION, UNSDGREGION rows — can be large, capped by `limit`).
+**Spatial filter design note:** OData data rows are stamped with exactly one `SpatialDimType`. A filter combining `SpatialDimType eq 'COUNTRY' and SpatialDim in ('JPN')` works correctly (verified). If more than one of `country_codes`, `region_codes`, `income_group_codes`, `spatial_type` are provided, the tool errors with a clear message rather than silently dropping one spatial type. If only `country_codes` are provided, `SpatialDimType eq 'COUNTRY' and SpatialDim in (...)` is used. If only `region_codes`, `SpatialDimType eq 'REGION' and SpatialDim in (...)`. If only `income_group_codes`, `SpatialDimType eq 'WORLDBANKINCOMEGROUP' and SpatialDim in (...)`. If only `spatial_type`, `SpatialDimType eq '<type>'` (every row of that type); adding `spatial_codes` appends `SpatialDim in (...)`. Both values pass through unvalidated. If none are provided, no spatial filter is applied (returns all geographies including UNREGION, UNSDGREGION rows — can be large, capped by `limit`).
 
-Note: filtering by `SpatialDim in (...)` without a `SpatialDimType` filter works at the API level and returns all rows matching those spatial dim codes regardless of type. This is not exposed as a parameter — always pair with `SpatialDimType` to avoid mixing heterogeneous geographies in one result set.
+Note: filtering by `SpatialDim in (...)` without a `SpatialDimType` filter works at the API level and returns all rows matching those spatial dim codes regardless of type. This is not exposed as a parameter — `spatial_codes` requires `spatial_type` so one result set never mixes heterogeneous geographies.
 
 **Year filter:** `TimeDim ge {year_from} and TimeDim le {year_to}` appended when provided.
 
@@ -358,9 +377,13 @@ https://ghoapi.azureedge.net/api/
 | `COUNTRY` | `JPN`, `USA`, `BRA`, historical WHO codes | Country-level data |
 | `REGION` | `AFR`, `AMR`, `EMR`, `EUR`, `SEAR`, `WPR` | WHO regional aggregates |
 | `WORLDBANKINCOMEGROUP` | `WB_HI`, `WB_LMI`, `WB_LI`, `WB_UMI`, `WB_MI` | Income-group aggregates |
-| `GLOBAL` | `GLOBAL` | Global aggregate |
-| `UNREGION` | Numeric strings like `"30"`, `"513"` | UN regional aggregates — appear in unfiltered results, not filterable via tool params |
-| `UNSDGREGION` | e.g. `"UNSDG_SUBSAHARANAFRICA"` | UN SDG regional aggregates — appear in unfiltered results, not filterable via tool params |
+| `GLOBAL` | `GLOBAL` | Global aggregate; `spatial_type` |
+| `UNREGION` | Numeric strings like `"30"`, `"513"` | UN regional aggregates; `spatial_type` |
+| `UNSDGREGION` | e.g. `"UNSDG_SUBSAHARANAFRICA"` | UN SDG regional aggregates; `spatial_type` |
+| `WORLDBANKREGION` | e.g. `WB_SSA` | World Bank regional aggregates; `spatial_type` |
+| `GBDREGION` | e.g. `GBD_IHME_ASIACEN` | Global Burden of Disease regional aggregates; `spatial_type` |
+| `UNICEFREGION` | e.g. `UNICEFREGIONESA` | UNICEF regional aggregates; `spatial_type` |
+| `MGHEREG` | e.g. `MDG_CCA`, `MDG_DEV` | MGHE regional aggregates; `spatial_type` |
 
 ### Error behavior
 
@@ -378,7 +401,7 @@ https://ghoapi.azureedge.net/api/
 
 **2. Six tools, not three.** Could collapse list/search/metadata into a single tool with a `mode` enum. Kept them separate because the operations have distinct preconditions, input shapes, and output schemas — collapsing would force awkward optional output fields and a longer description. `who_list_dimensions` is a trivial GET on `/DIMENSION` that returns available dimension type codes; without it, callers must already know valid dimension codes to pass to `who_list_dimension_values`, making dimension discovery a dead end.
 
-**3. Spatial filter is mutually exclusive per call.** OData data rows are stamped with exactly one `SpatialDimType`. A query mixing `COUNTRY` and `WORLDBANKINCOMEGROUP` would require two requests. The tool errors explicitly rather than silently splitting into two calls — agents should know what they're getting, not receive silently merged results from two query paths.
+**3. Spatial filter is mutually exclusive per call.** OData data rows are stamped with exactly one `SpatialDimType`. A query mixing `COUNTRY` and `WORLDBANKINCOMEGROUP` would require two requests. The tool errors explicitly rather than silently splitting into two calls — agents should know what they're getting, not receive silently merged results from two query paths. `spatial_type` (with optional `spatial_codes`) is a fourth member of the same exclusive set: one geography type per call, with codes always paired to a type.
 
 **4. No DataCanvas.** Considered for cross-indicator SQL queries. Deferred: the primary workflows are single-indicator filtered queries, not cross-indicator joins. Adding DuckDB as a dependency for a read-only research server feels disproportionate. Revisit if multi-indicator comparison becomes a core use case.
 

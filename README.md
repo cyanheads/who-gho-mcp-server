@@ -68,7 +68,8 @@ Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_
 
 - No keyword required — browse the 3,102-indicator catalog
 - Offset-based pagination via `limit` (default 50, max 500) and `offset`
-- Returns `totalCount` and `hasMore` for iteration
+- Returns `totalCount`, `hasMore`, `pageInfo`, `offset`, and `nextOffset` (when more remain), plus a `notice` when more remain, the limit was clamped, or the offset is past the end
+- An offset at or beyond `totalCount` returns an empty page with a notice naming the last reachable offset
 
 ---
 
@@ -101,11 +102,12 @@ Each mirrors data also reachable via `who_get_indicator_metadata` and `who_list_
 
 ### `who_query_indicator_data` <sub>tool</sub>
 
-- Spatial filters are mutually exclusive per call: `country_codes` (WHO country codes, including historical entries), `region_codes` (WHO aggregate rows), or `income_group_codes` (World Bank aggregate rows) — supplying more than one is a validation error
-- `year_from` / `year_to` time range; `sex` (`SEX_BTSX`, `SEX_FMLE`, `SEX_MLE`) applies only when the indicator's first cross-cutting dimension is SEX. `dim1_value`, `dim2_value`, and `dim3_value` select observed positional values; discover positions from returned type/value pairs, not metadata. `sex` overrides `dim1_value` with a notice.
+- Spatial filters are mutually exclusive per call: `country_codes` (WHO country codes, including historical entries), `region_codes` (WHO aggregate rows), `income_group_codes` (World Bank aggregate rows), or `spatial_type` (any geography type rows carry in `spatialDimType`, e.g. `GLOBAL`, `WORLDBANKREGION`, `GBDREGION`; optionally narrowed with `spatial_codes`, which requires `spatial_type`) — supplying more than one is a validation error
+- `data_source` selects one source on indicators that publish estimates from several surveys for the same country, year, and sex; rows carry `dataSourceDimType` / `dataSourceDim` (full code, e.g. `DATASOURCE_NLIS_312831`, from `who_list_dimension_values` with `dimension="DATASOURCE"`). Composes with any spatial filter
+- `year_from` / `year_to` time range; `sex` (`SEX_BTSX`, `SEX_FMLE`, `SEX_MLE`) applies only when the indicator's first cross-cutting dimension is SEX. `dim1_value`, `dim2_value`, and `dim3_value` select observed positional values as the full prefixed codes returned on rows (`AGEGROUP_YEARS05-14`, `CHILDCAUSE_CH9`; a bare value matches nothing); discover positions from returned type/value pairs, not metadata. `sex` overrides `dim1_value` with a notice.
 - `include_uncertainty` (default true) adds `low`/`high` bounds; `sort` (`year_desc` default or `year_asc`) with a total row ordering so paging never repeats or drops rows
-- Offset-based pagination with `limit` default 200, max 1000; reports `totalRows`, `hasMore`, `pageInfo`, `nextOffset`
-- Typed failure reasons: `indicator_not_found`, `no_data`, `ambiguous_spatial_filter`, `invalid_year_range`, `invalid_query`, `malformed_identifier`
+- Offset-based pagination with `limit` default 25, max 1000; reports `totalRows`, `hasMore`, `pageInfo`, `nextOffset`
+- Typed failure reasons: `indicator_not_found`, `no_data`, `ambiguous_spatial_filter`, `spatial_codes_without_type`, `invalid_year_range`, `invalid_query`, `malformed_identifier`
 
 ---
 
@@ -236,7 +238,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 bun run start:http
 
 ### Prerequisites
 
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js ≥24).
+- [Bun v1.4.4](https://bun.sh/) or higher (or Node.js ≥24).
 - No API key required — the WHO GHO API is public.
 
 ### Installation
