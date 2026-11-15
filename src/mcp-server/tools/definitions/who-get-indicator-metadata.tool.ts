@@ -14,7 +14,7 @@ import { wellFormed } from '@/utils/well-formed.js';
 export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
   title: 'Get WHO GHO Indicator Metadata',
   description:
-    'Fetch metadata for WHO GHO indicator codes: the canonical code, full name, and supported dimensions (e.g. COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, AGEGROUP). Call this before who_query_indicator_data to confirm valid filter dimensions. Processes the first 10 entries and returns unprocessedCodes to submit next, accepting at most 1000 raw entries. With GHO_CLAMP_LIMITS=false, calls above 10 reject. Many valid indicators have no dimension listing upstream — those return an empty dimensions array with dimensionsNote. Processed codes absent from both the catalog and dimension table appear in notFound. No found entries raises all_not_found only when no unprocessed entries remain.',
+    'Fetch metadata for WHO GHO indicator codes: the canonical code, full name, and supported dimensions (e.g. COUNTRY, REGION, SEX, YEAR, WORLDBANKINCOMEGROUP, AGEGROUP). Call this before who_query_indicator_data to confirm valid filter dimensions. Processes the first 10 entries and returns unprocessedCodes to submit next. Many valid indicators have no dimension listing upstream — those return an empty dimensions array with dimensionsNote. Processed codes absent from both the catalog and dimension table appear in notFound. No found entries raises all_not_found only when no unprocessed entries remain.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   input: z.object({
     indicator_codes: z
@@ -22,7 +22,7 @@ export const whoGetIndicatorMetadata = tool('who_get_indicator_metadata', {
       .min(1)
       .max(getServerConfig().clampLimits ? 1000 : 10)
       .describe(
-        'Indicator codes, e.g. ["WHOSIS_000001", "MDG_0000000026"]. Processes the first ten and returns remaining entries for the next call; at most 1000 entries.',
+        'Indicator codes, e.g. ["WHOSIS_000001", "MDG_0000000026"]. Processes the first ten and returns remaining entries for the next call.',
       ),
   }),
   output: z.object({

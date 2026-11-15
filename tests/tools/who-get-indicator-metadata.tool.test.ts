@@ -3,6 +3,7 @@
  * @module tests/tools/who-get-indicator-metadata.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import {
   createInMemoryStorage,
@@ -34,6 +35,30 @@ const mockService = {
 };
 
 vi.spyOn(ghoServiceModule, 'getGhoService').mockReturnValue(mockService as never);
+
+describe('whoGetIndicatorMetadata — advertised batch bounds (#41)', () => {
+  const codes = (
+    z.toJSONSchema(whoGetIndicatorMetadata.input) as {
+      properties?: Record<string, { description?: string; maxItems?: number }>;
+    }
+  ).properties?.indicator_codes;
+
+  it.each([
+    ['tool description', whoGetIndicatorMetadata.description],
+    ['indicator_codes description', String(codes?.description)],
+  ])('the %s names no server environment variable and no fixed entry ceiling', (_, text) => {
+    // Callers can neither see nor set server configuration; the advertised maxItems
+    // already carries the active entry ceiling in each mode.
+    expect(text).not.toMatch(/\bGHO_[A-Z_]+/);
+    expect(text).not.toMatch(/\bat most \d/);
+    expect(text).not.toContain('1000');
+    expect(text).toMatch(/first (10|ten)\b/);
+  });
+
+  it('advertises the default entry ceiling through maxItems alone', () => {
+    expect(codes?.maxItems).toBe(1000);
+  });
+});
 
 describe('whoGetIndicatorMetadata', () => {
   beforeEach(() => {
