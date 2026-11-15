@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.1](changelog/0.4.x/0.4.1.md) — 2026-11-14
+
+who_query_indicator_data adds data_source, spatial_type and spatial_codes filters and returns 25 rows by default; who_list_indicators reports offset, nextOffset and a paging notice; dimension value filters document the full prefixed codes.
+
 ## [0.4.0](changelog/0.4.x/0.4.0.md) — 2026-10-26 · ⚠️ Breaking
 
 WHO health queries gain independent search terms, canonical metadata, positional dimension filters, bounded reads, and a comparison guide; request deadlines cover response bodies and retries.
